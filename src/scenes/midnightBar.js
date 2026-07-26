@@ -20,9 +20,10 @@
 /** Map GPU quality preset to segment counts for curved meshes. Low is the iGPU path. */
 function detailLevel(preset) {
   const name = preset.neonDetail || "balanced";
-  if (name === "low") return { segs: 12, lathe: 10, sphere: [8, 12], torus: [14, 8], neonOval: 10 };
-  if (name === "high") return { segs: 32, lathe: 28, sphere: [16, 24], torus: [32, 16], neonOval: 22 };
-  return { segs: 24, lathe: 20, sphere: [12, 18], torus: [24, 12], neonOval: 16 };
+  // neonRing = segments around each smooth elliptical neon lobe (B / R bowls).
+  if (name === "low") return { segs: 12, lathe: 10, sphere: [8, 12], torus: [14, 8], neonRing: [16, 6] };
+  if (name === "high") return { segs: 32, lathe: 28, sphere: [16, 24], torus: [32, 16], neonRing: [36, 10] };
+  return { segs: 24, lathe: 20, sphere: [12, 18], torus: [24, 12], neonRing: [28, 8] };
 }
 
 // ---------------------------------------------------------------------------
@@ -168,33 +169,71 @@ function createBarTextures(ibrt) {
 }
 
 // ---------------------------------------------------------------------------
-// Neon BAR letter helpers (cube strokes merged into few draw calls)
+// Neon BAR letter helpers
+// Housing = cubes; straight strokes = cylinders; B/R bowls = smooth XY ellipse tubes.
 // ---------------------------------------------------------------------------
 
-function pushStroke(list, position, scale, rotationZ = 0) {
+function pushCube(list, position, scale, rotationZ = 0) {
   list.push({ position, scale, rotation: 0, rotationZ });
 }
 
-function pushVert(list, x, y, z, halfHeight, tube) {
-  pushStroke(list, [x, y, z], [tube, halfHeight, tube]);
+/** Unit cylinder is Y-aligned height 1; scaleY = full stroke length. */
+function pushTube(list, position, length, radius, rotationZ = 0) {
+  list.push({
+    position,
+    scale: [radius, length, radius],
+    rotation: 0,
+    rotationZ,
+  });
 }
 
-function pushHoriz(list, x, y, z, halfWidth, tube) {
-  pushStroke(list, [x, y, z], [halfWidth, tube, tube]);
+function pushTubeVert(list, x, y, z, length, radius) {
+  pushTube(list, [x, y, z], length, radius, 0);
 }
 
-/** Approximate a curved neon tube as a ring of short box strokes. */
-function pushOval(list, cx, y, z, radiusX, radiusY, tube, segments) {
-  for (let index = 0; index < segments; index += 1) {
-    const a0 = (index / segments) * Math.PI * 2;
-    const a1 = ((index + 1) / segments) * Math.PI * 2;
-    const x0 = cx + Math.cos(a0) * radiusX;
-    const y0 = y + Math.sin(a0) * radiusY;
-    const x1 = cx + Math.cos(a1) * radiusX;
-    const y1 = y + Math.sin(a1) * radiusY;
-    const halfLen = Math.hypot(x1 - x0, y1 - y0) * 0.8;
-    const tilt = Math.atan2(x1 - x0, y1 - y0);
-    pushStroke(list, [(x0 + x1) * 0.5, (y0 + y1) * 0.5, z], [tube, halfLen, tube], tilt);
+function pushTubeHoriz(list, x, y, z, length, radius) {
+  pushTube(list, [x, y, z], length, radius, Math.PI * 0.5);
+}
+
+/** Append a wall-facing elliptical neon tube (ring in the XY plane) into mesh buffers. */
+function appendWallEllipseTube(vertices, indices, cx, cy, cz, radiusX, radiusY, tube, radialSegs, tubeSegs) {
+  const base = vertices.length / 8;
+  for (let i = 0; i <= radialSegs; i += 1) {
+    const v = i / radialSegs;
+    const phi = v * Math.PI * 2;
+    const cosPhi = Math.cos(phi);
+    const sinPhi = Math.sin(phi);
+    const centerX = cx + cosPhi * radiusX;
+    const centerY = cy + sinPhi * radiusY;
+    const tx = -sinPhi * radiusX;
+    const ty = cosPhi * radiusY;
+    const tLen = Math.hypot(tx, ty) || 1;
+    const tangentX = tx / tLen;
+    const tangentY = ty / tLen;
+    // In-plane normal (rotate tangent 90°) so the tube stays round on the wall.
+    const normalX = -tangentY;
+    const normalY = tangentX;
+    for (let j = 0; j <= tubeSegs; j += 1) {
+      const u = j / tubeSegs;
+      const theta = u * Math.PI * 2;
+      const cosTheta = Math.cos(theta);
+      const sinTheta = Math.sin(theta);
+      const px = centerX + normalX * tube * cosTheta;
+      const py = centerY + normalY * tube * cosTheta;
+      const pz = cz + tube * sinTheta;
+      const nx = normalX * cosTheta;
+      const ny = normalY * cosTheta;
+      const nz = sinTheta;
+      const inv = 1 / (Math.hypot(nx, ny, nz) || 1);
+      vertices.push(px, py, pz, nx * inv, ny * inv, nz * inv, u, v);
+    }
+  }
+  for (let i = 0; i < radialSegs; i += 1) {
+    for (let j = 0; j < tubeSegs; j += 1) {
+      const a = base + i * (tubeSegs + 1) + j;
+      const b = a + tubeSegs + 1;
+      indices.push(a, b, a + 1, a + 1, b, b + 1);
+    }
   }
 }
 
@@ -206,30 +245,48 @@ function buildBarNeon(ibrt, tex, detail) {
   const y = 3.55;
   const z = -4.55;
   const tube = 0.05;
-  const pink = [];
+  const pinkStems = [];
   const cyan = [];
   const housing = [];
+  const [ringSegs, tubeSegs] = detail.neonRing;
+  const tubeMesh = ibrt.buildCylinder(Math.max(8, (detail.segs / 2) | 0), 1, 1, 1, true);
 
   // Sign backplate + side posts.
-  pushStroke(housing, [0, y, z - 0.12], [2.4, 0.72, 0.05]);
-  pushStroke(housing, [-1.9, y - 0.95, z - 0.08], [0.06, 0.55, 0.06]);
-  pushStroke(housing, [1.9, y - 0.95, z - 0.08], [0.06, 0.55, 0.06]);
+  pushCube(housing, [0, y, z - 0.12], [2.4, 0.72, 0.05]);
+  pushCube(housing, [-1.9, y - 0.95, z - 0.08], [0.06, 0.55, 0.06]);
+  pushCube(housing, [1.9, y - 0.95, z - 0.08], [0.06, 0.55, 0.06]);
 
-  // Letter B — vertical stem + two lobes.
-  pushVert(pink, -1.55, y, z, 0.48, tube);
-  pushOval(pink, -1.22, y + 0.22, z, 0.28, 0.22, tube * 0.9, Math.floor(detail.neonOval * 0.55));
-  pushOval(pink, -1.2, y - 0.22, z, 0.32, 0.24, tube * 0.9, Math.floor(detail.neonOval * 0.55));
+  // Letter B — stem + two smooth elliptical bowls.
+  pushTubeVert(pinkStems, -1.55, y, z, 0.96, tube);
+  const pinkRingVerts = [];
+  const pinkRingIdx = [];
+  appendWallEllipseTube(pinkRingVerts, pinkRingIdx, -1.2, y + 0.22, z, 0.3, 0.22, tube, ringSegs, tubeSegs);
+  appendWallEllipseTube(pinkRingVerts, pinkRingIdx, -1.18, y - 0.22, z, 0.34, 0.24, tube, ringSegs, tubeSegs);
 
   // Letter A — two legs + crossbar (cyan for contrast in the puddle).
-  pushVert(cyan, -0.45, y, z, 0.48, tube);
-  pushVert(cyan, 0.15, y, z, 0.48, tube);
-  pushHoriz(cyan, -0.15, y - 0.05, z, 0.28, tube);
-  pushHoriz(cyan, -0.15, y + 0.42, z, 0.18, tube);
+  pushTubeVert(cyan, -0.45, y, z, 0.96, tube);
+  pushTubeVert(cyan, 0.15, y, z, 0.96, tube);
+  pushTubeHoriz(cyan, -0.15, y - 0.05, z, 0.56, tube);
+  pushTubeHoriz(cyan, -0.15, y + 0.42, z, 0.4, tube);
 
   // Letter R — stem + bowl + diagonal leg.
-  pushVert(pink, 0.75, y, z, 0.48, tube);
-  pushOval(pink, 1.1, y + 0.18, z, 0.3, 0.26, tube * 0.9, Math.floor(detail.neonOval * 0.5));
-  pushStroke(pink, [1.22, y - 0.28, z], [tube, 0.32, tube], 0.55);
+  pushTubeVert(pinkStems, 0.75, y, z, 0.96, tube);
+  appendWallEllipseTube(pinkRingVerts, pinkRingIdx, 1.12, y + 0.18, z, 0.32, 0.26, tube, ringSegs, tubeSegs);
+  pushTube(pinkStems, [1.24, y - 0.28, z], 0.68, tube, 0.55);
+
+  const neonMat = (mesh, color, emissive) => ({
+    mesh,
+    position: [0, 0, 0],
+    scale: [1, 1, 1],
+    color,
+    texture: tex.neon,
+    emissive,
+    neon: true,
+    cast: false,
+    receive: false,
+    gloss: 140,
+    enabled: true,
+  });
 
   return [
     {
@@ -245,32 +302,9 @@ function buildBarNeon(ibrt, tex, detail) {
       gloss: 40,
       enabled: true,
     },
-    {
-      mesh: ibrt.mergeCubeInstances(pink),
-      position: [0, 0, 0],
-      scale: [1, 1, 1],
-      color: [1, 0.35, 0.65, 1],
-      texture: tex.neon,
-      emissive: [1.8, 0.15, 0.55],
-      neon: true,
-      cast: false,
-      receive: false,
-      gloss: 140,
-      enabled: true,
-    },
-    {
-      mesh: ibrt.mergeCubeInstances(cyan),
-      position: [0, 0, 0],
-      scale: [1, 1, 1],
-      color: [0.35, 0.95, 1, 1],
-      texture: tex.neon,
-      emissive: [0.15, 1.4, 1.6],
-      neon: true,
-      cast: false,
-      receive: false,
-      gloss: 140,
-      enabled: true,
-    },
+    neonMat(ibrt.mergeMeshInstances(tubeMesh, pinkStems), [1, 0.35, 0.65, 1], [1.8, 0.15, 0.55]),
+    neonMat(ibrt.makeMesh(pinkRingVerts, pinkRingIdx), [1, 0.35, 0.65, 1], [1.8, 0.15, 0.55]),
+    neonMat(ibrt.mergeMeshInstances(tubeMesh, cyan), [0.35, 0.95, 1, 1], [0.15, 1.4, 1.6]),
   ];
 }
 
@@ -491,40 +525,42 @@ export function buildMidnightBar(ibrt, preset) {
     });
   };
 
+  // Shelf stadium half-height ≈ 0.09 — bottle bases sit just above each plank.
+  const shelfTop = { low: 1.66, mid: 2.36, high: 3.06 };
   const shelfBottles = [
-    { mesh: meshes.wine, x: -4.2, y: 1.62, s: 0.55, color: C.redWine, tex: tex.amber },
-    { mesh: meshes.slim, x: -3.5, y: 1.62, s: 0.5, color: C.clear, tex: tex.glass },
-    { mesh: meshes.whiskey, x: -2.8, y: 1.62, s: 0.52, color: C.whiskey, tex: tex.amber },
-    { mesh: meshes.decanter, x: -2.0, y: 1.62, s: 0.5, color: C.clear, tex: tex.glass },
-    { mesh: meshes.wine, x: -1.2, y: 1.62, s: 0.58, color: C.redWine, tex: tex.amber },
-    { mesh: meshes.slim, x: -0.4, y: 1.62, s: 0.48, color: C.clear, tex: tex.glass },
-    { mesh: meshes.whiskey, x: 0.4, y: 1.62, s: 0.54, color: C.whiskey, tex: tex.amber },
-    { mesh: meshes.wine, x: 1.2, y: 1.62, s: 0.56, color: C.redWine, tex: tex.amber },
-    { mesh: meshes.decanter, x: 2.0, y: 1.62, s: 0.5, color: C.whiskey, tex: tex.amber },
-    { mesh: meshes.slim, x: 2.8, y: 1.62, s: 0.5, color: C.clear, tex: tex.glass },
-    { mesh: meshes.whiskey, x: 3.5, y: 1.62, s: 0.52, color: C.whiskey, tex: tex.amber },
-    { mesh: meshes.wine, x: 4.2, y: 1.62, s: 0.55, color: C.redWine, tex: tex.amber },
-    { mesh: meshes.slim, x: -3.8, y: 2.32, s: 0.46, color: C.clear, tex: tex.glass },
-    { mesh: meshes.wine, x: -3.0, y: 2.32, s: 0.52, color: C.redWine, tex: tex.amber },
-    { mesh: meshes.shaker, x: -2.15, y: 2.32, s: 0.48, color: C.brass, tex: tex.brass, gloss: 140 },
-    { mesh: meshes.decanter, x: -1.3, y: 2.32, s: 0.48, color: C.clear, tex: tex.glass },
-    { mesh: meshes.whiskey, x: -0.4, y: 2.32, s: 0.5, color: C.whiskey, tex: tex.amber },
-    { mesh: meshes.wine, x: 0.5, y: 2.32, s: 0.54, color: C.redWine, tex: tex.amber },
-    { mesh: meshes.slim, x: 1.35, y: 2.32, s: 0.46, color: C.clear, tex: tex.glass },
-    { mesh: meshes.shaker, x: 2.2, y: 2.32, s: 0.48, color: C.brass, tex: tex.brass, gloss: 140 },
-    { mesh: meshes.wine, x: 3.05, y: 2.32, s: 0.52, color: C.redWine, tex: tex.amber },
-    { mesh: meshes.decanter, x: 3.9, y: 2.32, s: 0.48, color: C.clear, tex: tex.glass },
-    { mesh: meshes.wine, x: -3.4, y: 3.02, s: 0.5, color: C.redWine, tex: tex.amber },
-    { mesh: meshes.slim, x: -2.5, y: 3.02, s: 0.45, color: C.clear, tex: tex.glass },
-    { mesh: meshes.whiskey, x: -1.55, y: 3.02, s: 0.48, color: C.whiskey, tex: tex.amber },
-    { mesh: meshes.wine, x: -0.55, y: 3.02, s: 0.52, color: C.redWine, tex: tex.amber },
-    { mesh: meshes.decanter, x: 0.45, y: 3.02, s: 0.46, color: C.clear, tex: tex.glass },
-    { mesh: meshes.slim, x: 1.4, y: 3.02, s: 0.45, color: C.whiskey, tex: tex.amber },
-    { mesh: meshes.whiskey, x: 2.35, y: 3.02, s: 0.48, color: C.whiskey, tex: tex.amber },
-    { mesh: meshes.wine, x: 3.3, y: 3.02, s: 0.5, color: C.redWine, tex: tex.amber },
+    { mesh: meshes.wine, x: -4.2, y: shelfTop.low, s: 0.55, color: C.redWine, tex: tex.amber },
+    { mesh: meshes.slim, x: -3.5, y: shelfTop.low, s: 0.5, color: C.clear, tex: tex.glass },
+    { mesh: meshes.whiskey, x: -2.8, y: shelfTop.low, s: 0.52, color: C.whiskey, tex: tex.amber },
+    { mesh: meshes.decanter, x: -2.0, y: shelfTop.low, s: 0.5, color: C.clear, tex: tex.glass },
+    { mesh: meshes.wine, x: -1.2, y: shelfTop.low, s: 0.58, color: C.redWine, tex: tex.amber },
+    { mesh: meshes.slim, x: -0.4, y: shelfTop.low, s: 0.48, color: C.clear, tex: tex.glass },
+    { mesh: meshes.whiskey, x: 0.4, y: shelfTop.low, s: 0.54, color: C.whiskey, tex: tex.amber },
+    { mesh: meshes.wine, x: 1.2, y: shelfTop.low, s: 0.56, color: C.redWine, tex: tex.amber },
+    { mesh: meshes.decanter, x: 2.0, y: shelfTop.low, s: 0.5, color: C.whiskey, tex: tex.amber },
+    { mesh: meshes.slim, x: 2.8, y: shelfTop.low, s: 0.5, color: C.clear, tex: tex.glass },
+    { mesh: meshes.whiskey, x: 3.5, y: shelfTop.low, s: 0.52, color: C.whiskey, tex: tex.amber },
+    { mesh: meshes.wine, x: 4.2, y: shelfTop.low, s: 0.55, color: C.redWine, tex: tex.amber },
+    { mesh: meshes.slim, x: -3.8, y: shelfTop.mid, s: 0.46, color: C.clear, tex: tex.glass },
+    { mesh: meshes.wine, x: -3.0, y: shelfTop.mid, s: 0.52, color: C.redWine, tex: tex.amber },
+    { mesh: meshes.shaker, x: -2.15, y: shelfTop.mid, s: 0.48, color: C.brass, tex: tex.brass, gloss: 140 },
+    { mesh: meshes.decanter, x: -1.3, y: shelfTop.mid, s: 0.48, color: C.clear, tex: tex.glass },
+    { mesh: meshes.whiskey, x: -0.4, y: shelfTop.mid, s: 0.5, color: C.whiskey, tex: tex.amber },
+    { mesh: meshes.wine, x: 0.5, y: shelfTop.mid, s: 0.54, color: C.redWine, tex: tex.amber },
+    { mesh: meshes.slim, x: 1.35, y: shelfTop.mid, s: 0.46, color: C.clear, tex: tex.glass },
+    { mesh: meshes.shaker, x: 2.2, y: shelfTop.mid, s: 0.48, color: C.brass, tex: tex.brass, gloss: 140 },
+    { mesh: meshes.wine, x: 3.05, y: shelfTop.mid, s: 0.52, color: C.redWine, tex: tex.amber },
+    { mesh: meshes.decanter, x: 3.9, y: shelfTop.mid, s: 0.48, color: C.clear, tex: tex.glass },
+    { mesh: meshes.wine, x: -3.4, y: shelfTop.high, s: 0.5, color: C.redWine, tex: tex.amber },
+    { mesh: meshes.slim, x: -2.5, y: shelfTop.high, s: 0.45, color: C.clear, tex: tex.glass },
+    { mesh: meshes.whiskey, x: -1.55, y: shelfTop.high, s: 0.48, color: C.whiskey, tex: tex.amber },
+    { mesh: meshes.wine, x: -0.55, y: shelfTop.high, s: 0.52, color: C.redWine, tex: tex.amber },
+    { mesh: meshes.decanter, x: 0.45, y: shelfTop.high, s: 0.46, color: C.clear, tex: tex.glass },
+    { mesh: meshes.slim, x: 1.4, y: shelfTop.high, s: 0.45, color: C.whiskey, tex: tex.amber },
+    { mesh: meshes.whiskey, x: 2.35, y: shelfTop.high, s: 0.48, color: C.whiskey, tex: tex.amber },
+    { mesh: meshes.wine, x: 3.3, y: shelfTop.high, s: 0.5, color: C.redWine, tex: tex.amber },
   ];
   for (const item of shelfBottles) {
-    addProp(item.mesh, [item.x, item.y, -4.7], [item.s, item.s, item.s], item.color, item.tex, item.gloss ?? 125);
+    addProp(item.mesh, [item.x, item.y, -4.68], [item.s, item.s, item.s], item.color, item.tex, item.gloss ?? 125);
   }
 
   // Counter service joins the same buckets where mesh/material match.
@@ -535,14 +571,6 @@ export function buildMidnightBar(ibrt, preset) {
   addProp(meshes.shaker, [0.35, 1.18, 0.5], [0.5, 0.5, 0.5], C.brass, tex.brass, 140);
   addProp(meshes.whiskey, [1.9, 1.18, 0.4], [0.42, 0.42, 0.42], C.whiskey, tex.amber, 125);
   addProp(meshes.coupe, [0.15, 0.6, 3.45], [0.4, 0.4, 0.4], C.clear, tex.glass, 125);
-  // Hanging stemware (flipped) — separate key via rotationZ in extras.
-  for (const x of [-3.6, -2.9, -2.2, -1.5, 1.5, 2.2, 2.9, 3.6]) {
-    addProp(meshes.coupe, [x, 2.78, -4.55], [0.32, 0.32, 0.32], C.clear, tex.glass, 125, {
-      rotationZ: Math.PI,
-      cast: false,
-    });
-  }
-
   for (const bucket of propBuckets.values()) {
     const { cast, receive, neon, emissive, rotationZ } = bucket.extras;
     pushMerged(ibrt, objects, bucket.mesh, bucket.instances, bucket.color, bucket.tex, {
@@ -567,11 +595,12 @@ export function buildMidnightBar(ibrt, preset) {
     position: [x, 1.72, -0.15], scale: [0.07, 0.07, 0.07],
   })), [0.85, 0.2, 0.25, 1], tex.velvet, { gloss: 90, cast: false });
 
-  objects.push(obj(meshes.cube, [0, 2.35, -5.15], [5.0, 1.55, 0.04], [0.55, 0.7, 0.78, 1], tex.glass, {
-    gloss: 160,
+  // Dark glossy back-bar panel (no emissive — a bright slab washed out the neon).
+  objects.push(obj(meshes.cube, [0, 2.35, -5.15], [5.0, 1.55, 0.04], [0.22, 0.28, 0.32, 1], tex.glass, {
+    gloss: 150,
     cast: false,
     receive: true,
-    emissive: [0.03, 0.04, 0.05],
+    emissive: [0.01, 0.015, 0.02],
   }));
 
   // --- Booth seating + pendants + accents ----------------------------------
@@ -584,10 +613,10 @@ export function buildMidnightBar(ibrt, preset) {
     { position: [-4.6, 0.42, boothZ + 0.55], scale: [0.85, 0.14, 0.55] },
     { position: [4.6, 0.42, boothZ + 0.55], scale: [0.85, 0.14, 0.55] },
   ], [0.45, 0.1, 0.18, 1], tex.velvet, { gloss: 28 });
-  // Booth brass discs + planter bases share one cylinder batch.
+  // Thin brass trim under booth cushions (not a second cushion) + planter bases.
   pushMerged(ibrt, objects, meshes.cylinder, [
-    { position: [-4.6, 0.7, boothZ + 0.55], scale: [0.45, 0.05, 0.45] },
-    { position: [4.6, 0.7, boothZ + 0.55], scale: [0.45, 0.05, 0.45] },
+    { position: [-4.6, 0.3, boothZ + 0.55], scale: [0.82, 0.03, 0.52] },
+    { position: [4.6, 0.3, boothZ + 0.55], scale: [0.82, 0.03, 0.52] },
     { position: [-5.2, 0.12, 2.8], scale: [0.35, 0.2, 0.35] },
     { position: [5.2, 0.12, 2.8], scale: [0.35, 0.2, 0.35] },
   ], [0.55, 0.42, 0.25, 1], tex.brass, { gloss: 100, cast: false });
@@ -608,26 +637,27 @@ export function buildMidnightBar(ibrt, preset) {
     position: [x, 3.55, 0.2], scale: [0.18, 0.16, 0.18],
   })), [0.55, 0.42, 0.22, 1], tex.brass, { gloss: 120, cast: false, neon: true });
 
-  // Corner orbs — single tinted batch (same emissive strength).
-  pushMerged(ibrt, objects, meshes.sphere, [
-    { position: [-5.2, 0.55, 2.8], scale: [0.45, 0.45, 0.45] },
-    { position: [5.2, 0.55, 2.8], scale: [0.45, 0.45, 0.45] },
-  ], [0.35, 0.4, 0.45, 1], tex.glass, {
-    emissive: [0.04, 0.05, 0.06],
-    gloss: 100,
-  });
+  // Corner orbs — keep distinct tints (worth two draws for color pop).
+  objects.push(obj(meshes.sphere, [-5.2, 0.55, 2.8], [0.45, 0.45, 0.45], [0.2, 0.55, 0.48, 1], tex.glass, {
+    emissive: [0.03, 0.1, 0.08],
+    gloss: 110,
+  }));
+  objects.push(obj(meshes.sphere, [5.2, 0.55, 2.8], [0.45, 0.45, 0.45], [0.55, 0.18, 0.4, 1], tex.velvet, {
+    emissive: [0.1, 0.03, 0.07],
+    gloss: 90,
+  }));
 
   objects.push(obj(meshes.cylinder, [0, 0.55, 3.4], [0.55, 0.06, 0.55], [0.7, 0.55, 0.3, 1], tex.brass, { gloss: 130 }));
 
   objects.push(...buildBarNeon(ibrt, tex, detail));
 
-  // Wet floor patch in front of the bar — primary reflection stress surface.
+  // Large wet patch in front of the stools — the reflection must read at first glance.
   const water = {
     mesh: meshes.puddle,
-    position: [0.1, 0.018, 1.55],
-    scale: [1.35, 1, 0.95],
-    color: [0.02, 0.06, 0.09],
-    opacity: 0.97,
+    position: [0, 0.02, 1.85],
+    scale: [1.65, 1, 1.25],
+    color: [0.015, 0.055, 0.08],
+    opacity: 0.98,
     planeY: 0, // mirror plane Y used by the mirrored camera + clip
   };
 
@@ -639,16 +669,17 @@ export function buildMidnightBar(ibrt, preset) {
     // Pink neon local light near the BAR sign (intensity zeroed when neon off).
     localLight: {
       position: [0, 3.55, -4.2],
-      color: [1.0, 0.45, 0.7],
-      intensity: 3.8,
+      color: [1.0, 0.5, 0.75],
+      intensity: 4.2,
     },
+    // Default framing: puddle in the lower third, neon + shelves readable above.
     camera: {
-      yaw: 0.08,
-      pitch: 0.28,
-      distance: 9.2,
-      target: [0, 1.35, 0.2],
-      lightX: 2.8,
-      lightZ: 1.6,
+      yaw: 0.18,
+      pitch: 0.22,
+      distance: 8.6,
+      target: [0, 1.15, 0.85],
+      lightX: 2.6,
+      lightZ: 2.0,
     },
     bounds: { minX: -6.4, maxX: 6.4, minY: 0.3, maxY: 7.5, minZ: -5.0, maxZ: 5.5 },
     targetClamp: { minX: -4.2, maxX: 4.2, minZ: -3.5, maxZ: 2.8 },

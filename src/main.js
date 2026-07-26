@@ -66,12 +66,12 @@ const SCENES = {
 
 const state = {
   sceneId: "bar", // "bar" | "atrium"
-  yaw: 0.08,
-  pitch: 0.28,
-  distance: 9.2,
-  target: [0, 1.35, 0.2],
-  lightX: 2.8,
-  lightZ: 1.6,
+  yaw: 0.18,
+  pitch: 0.22,
+  distance: 8.6,
+  target: [0, 1.15, 0.85],
+  lightX: 2.6,
+  lightZ: 2.0,
   imageAccents: true, // sample procedural albedo textures
   neon: true,         // show neon-tagged objects + local colored light
   debug: false,       // draw key-light marker sphere
@@ -323,7 +323,7 @@ rebuildScene({ resetCamera: true });
 resize();
 
 window.IBRT = {
-  version: "0.6.2",
+  version: "0.6.4",
   qualityPresets: QUALITY_PRESETS,
   renderer: ibrt,
   state,

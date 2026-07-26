@@ -53,7 +53,7 @@ export const QUALITY_PRESETS = {
     reflectionSize: 1024,
     reflectionSamples: 4,
     pcfMode: 1,           // 4-tap diagonal PCF
-    waterBlur: 2,         // wide soft sample + mip bias
+    waterBlur: 1,         // soft enough for AA, sharp enough to read neon in the puddle
     maxPixelRatio: 1,
     shadowStrength: 0.86,
     puddleSegments: 56,
@@ -399,10 +399,10 @@ vec2 softWave(vec2 p, float t) {
   );
 }
 
-// Soft multi-tap sample + mip bias so bright neon edges do not stair-step.
+// Soft multi-tap sample + mild mip bias so neon stays readable without stair-steps.
 vec3 sampleReflection(vec2 uv, float texel, float mode, float extraLod) {
-  float lodBias = (mode < 1.5 ? 0.7 : 1.05) + extraLod;
-  vec2 o = vec2(texel * (mode < 1.5 ? 1.35 : 2.05) * (1.0 + extraLod * 0.4));
+  float lodBias = (mode < 0.5 ? 0.35 : mode < 1.5 ? 0.55 : 0.95) + extraLod;
+  vec2 o = vec2(texel * (mode < 1.5 ? 1.2 : 1.9) * (1.0 + extraLod * 0.35));
   vec3 color = texture(uReflectionTexture, uv, lodBias).rgb * 0.28;
   color += texture(uReflectionTexture, uv + vec2(o.x, 0.0), lodBias).rgb * 0.12;
   color += texture(uReflectionTexture, uv - vec2(o.x, 0.0), lodBias).rgb * 0.12;
@@ -454,9 +454,10 @@ void main() {
   vec3 rimTint = mix(uWaterColor, vec3(0.06, 0.1, 0.09), 0.45);
   vec3 tint = mix(rimTint, deepTint, interior * interior);
   reflection = mix(tint, reflection, edgeFade);
-  float reflectAmount = 0.58 + fresnel * 0.36 + interior * 0.05 + grazing * 0.08;
-  reflectAmount *= mix(0.82, 1.0, edgeFade);
-  vec3 surface = mix(tint, reflection, clamp(reflectAmount, 0.0, 0.96));
+  // Bias toward the mirrored image so the puddle reads clearly at first glance.
+  float reflectAmount = 0.66 + fresnel * 0.32 + interior * 0.06 + grazing * 0.1;
+  reflectAmount *= mix(0.85, 1.0, edgeFade);
+  vec3 surface = mix(tint, reflection, clamp(reflectAmount, 0.0, 0.97));
   surface += vec3(0.5, 0.68, 0.62) * glint * (0.12 + interior * 0.14 + grazing * 0.08);
   surface += uNeonColor * neonGlint * neonFalloff * (0.28 + interior * 0.18);
   surface = surface / (surface + vec3(0.9));

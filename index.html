@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#071018" />
+    <title>Image Based RT // View Cell Lab</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <!-- Application shell: a small renderer lab UI around the WebGL viewport. -->
+    <main class="app-shell">
+      <!-- Brand and global reset action. -->
+      <header class="topbar">
+        <div class="brand-lockup">
+          <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+          <div>
+            <p class="eyebrow">OPEN SOURCE RENDERING LAB</p>
+            <h1>Image Based RT</h1>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <span class="status-dot"><i></i> LIVE PROTOTYPE</span>
+          <button class="ghost-button" id="resetButton" type="button">Reset view</button>
+        </div>
+      </header>
+
+      <!-- Main workspace: the canvas occupies the primary area; the inspector
+           exposes the active render pipeline and interaction state. -->
+      <section class="workspace">
+        <div class="viewport-wrap">
+          <!-- WebGL2 draws the 3D atrium, shadow map result, and water pass. -->
+          <canvas id="viewport" aria-label="Interactive image-based rendering scene"></canvas>
+          <div class="viewport-label">REALTIME 3D <span>•</span> IMAGE REFLECTION + SHADOW MAP</div>
+          <div class="control-hint">
+            <span class="key">DRAG</span> orbit
+            <span class="key">WASD</span> move
+            <span class="key">Q/E</span> light
+            <span class="key">R</span> reset
+          </div>
+        </div>
+
+        <!-- Inspector copy intentionally explains the experiment in-product. -->
+        <aside class="inspector" aria-label="Renderer inspector">
+          <div class="inspector-section intro-section">
+            <p class="eyebrow">SCENE / 001</p>
+            <h2>Neon Atrium</h2>
+            <p class="muted">A low-cost 3D atrium with image-assisted surfaces, orbit controls, and a dynamic shadow-casting light.</p>
+          </div>
+
+          <!-- Values are updated by updateTelemetry() in src/main.js. -->
+          <div class="inspector-section telemetry-section">
+            <div class="section-heading"><span>RUNTIME TELEMETRY</span><span class="live-pill">LIVE</span></div>
+            <div class="telemetry-grid">
+              <div class="metric"><span class="metric-label">RENDERER</span><strong id="cellReadout">WEBGL2</strong></div>
+              <div class="metric"><span class="metric-label">SHADOW</span><strong id="blendReadout">1024px</strong></div>
+              <div class="metric"><span class="metric-label">DRAWS</span><strong id="passReadout">2 + 1</strong></div>
+              <div class="metric"><span class="metric-label">FRAME</span><strong id="frameReadout">60 FPS</strong></div>
+            </div>
+          </div>
+
+          <!-- Controls are wired to renderer state by the JavaScript entrypoint. -->
+          <div class="inspector-section controls-section">
+            <div class="section-heading"><span>REALTIME PIPELINE</span></div>
+            <label class="toggle-row" for="blendToggle">
+              <span><b>Image accents</b><small>Use baked texture detail on surfaces</small></span>
+              <input id="blendToggle" type="checkbox" checked />
+              <span class="toggle-ui" aria-hidden="true"></span>
+            </label>
+            <label class="toggle-row" for="neonToggle">
+              <span><b>Neon sign</b><small>Letterform NEON tubes and colored local light</small></span>
+              <input id="neonToggle" type="checkbox" checked />
+              <span class="toggle-ui" aria-hidden="true"></span>
+            </label>
+            <label class="toggle-row" for="debugToggle">
+              <span><b>Shadow debug</b><small>Show the moving light marker</small></span>
+              <input id="debugToggle" type="checkbox" />
+              <span class="toggle-ui" aria-hidden="true"></span>
+            </label>
+            <label class="select-row" for="qualitySelect">
+              <span><b>GPU quality</b><small>Maps, PCF taps, blur, and pixel ratio</small></span>
+              <select id="qualitySelect">
+                <option value="low">Low / 256px · 1-tap</option>
+                <option value="balanced" selected>Balanced / 512px · soft</option>
+                <option value="high">High / 1024px · detailed</option>
+              </select>
+            </label>
+          </div>
+
+          <!-- Legend clarifies which effects are geometry, imagery, or shadows. -->
+          <div class="inspector-section legend-section">
+            <div class="section-heading"><span>HOW IT WORKS</span></div>
+            <div class="legend-row"><span class="legend-swatch cyan"></span><span>Lit proxy geometry</span></div>
+            <div class="legend-row"><span class="legend-swatch violet"></span><span>Image-based water reflection</span></div>
+            <div class="legend-row"><span class="legend-swatch neon"></span><span>Neon emission + local light</span></div>
+            <div class="legend-row"><span class="legend-swatch orange"></span><span>Soft PCF shadow</span></div>
+            <p class="tiny-note">The round puddle reflects a mirrored scene image of the NEON letter sign, then gently warps it with soft undulation and thin feathered edges.</p>
+          </div>
+
+          <!-- Documentation link intentionally stays available from the demo. -->
+          <footer class="inspector-footer">
+            <span>IBRT / 0.5.0</span>
+            <a href="./PROJECT.md">Read project notes ↗</a>
+          </footer>
+        </aside>
+      </section>
+    </main>
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>

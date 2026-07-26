@@ -98,11 +98,11 @@ ibrt.renderFrame({
 
 | Preset | Shadow | Reflection | PCF | Water blur | Max DPR |
 | --- | ---: | ---: | --- | --- | ---: |
-| Low | 256px | 256px | 1-tap | 1-tap | 1.0 |
-| Balanced | 512px | 384px | 4-tap | 5-tap | 1.0 |
-| High | 1024px | 768px | 3×3 | 9-tap | 1.5 |
+| Low | 256px | 640px · 2× MSAA | 1-tap | soft + mips | 1.0 |
+| Balanced | 512px | 1024px · 4× MSAA | 4-tap | soft + mips | 1.0 |
+| High | 1024px | 1536px · 4× MSAA | 3×3 | soft + mips | 1.5 |
 
-Neon strokes are merged into a few batched meshes, and shadow/reflection passes can refresh on an interval when the view is stable — better frames on integrated GPUs without dropping the look.
+Neon strokes are merged into a few batched meshes. The mirror pass uses MSAA + mipmaps and a multi-tap sample so puddle neon stays smooth instead of pixelated.
 
 ---
 
@@ -126,7 +126,7 @@ More detail: [`PROJECT.md`](./PROJECT.md).
 ## Built with
 
 - Vanilla **WebGL2** (ES modules, no build step)  
-- Image-based planar reflections  
+- Image-based planar reflections that hold up from orbit / side / grazing views  
 - Depth shadows with quality-scaled PCF  
 - Batched neon meshes + temporal pass refresh for better frames  
 - Procedural textures generated at runtime  

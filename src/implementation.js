@@ -34,39 +34,42 @@ export const QUALITY_PRESETS = {
   // Fast path for integrated GPUs and thermal-limited laptops.
   low: {
     shadowSize: 256,
-    reflectionSize: 256,
-    pcfMode: 0,         // 1-tap shadow
-    waterBlur: 0,       // 1-tap reflection sample
+    reflectionSize: 640,
+    reflectionSamples: 2, // MSAA on the mirror pass (cheap edge cleanup)
+    pcfMode: 0,           // 1-tap shadow
+    waterBlur: 1,         // 5-tap + mip bias (kills stair-steps)
     maxPixelRatio: 1,
     shadowStrength: 0.7,
     puddleSegments: 40,
     puddleRings: 3,
     neonDetail: "low",
     antialias: false,
-    shadowInterval: 2,      // refresh shadow every N frames when still
-    reflectionInterval: 2,  // refresh reflection every N frames
+    shadowInterval: 2,
+    reflectionInterval: 1,
   },
   // Default demo path: readable neon letters, still modest VRAM.
   balanced: {
     shadowSize: 512,
-    reflectionSize: 384,
-    pcfMode: 1,         // 4-tap diagonal PCF (cheaper than 3x3)
-    waterBlur: 1,       // 5-tap cross blur
+    reflectionSize: 1024,
+    reflectionSamples: 4,
+    pcfMode: 1,           // 4-tap diagonal PCF
+    waterBlur: 2,         // wide soft sample + mip bias
     maxPixelRatio: 1,
     shadowStrength: 0.86,
     puddleSegments: 56,
     puddleRings: 4,
     neonDetail: "balanced",
-    antialias: false,
+    antialias: true,      // smooth neon / sphere edges in the main view
     shadowInterval: 1,
-    reflectionInterval: 2,
+    reflectionInterval: 1,
   },
   // Higher fidelity when a discrete GPU is available.
   high: {
     shadowSize: 1024,
-    reflectionSize: 768,
-    pcfMode: 2,         // 3x3 PCF
-    waterBlur: 2,       // 9-tap blur
+    reflectionSize: 1536,
+    reflectionSamples: 4,
+    pcfMode: 2,           // 3x3 PCF
+    waterBlur: 2,
     maxPixelRatio: 1.5,
     shadowStrength: 0.92,
     puddleSegments: 80,
@@ -237,6 +240,7 @@ uniform float uReceiveShadow;
 uniform float uGloss;
 uniform float uShadowTexel;
 uniform float uPcfMode;
+uniform float uClipBelowY;
 out vec4 outColor;
 
 float sampleShadow(vec3 shadowCoord, float bias, vec2 offset) {
@@ -273,6 +277,9 @@ float shadowAmount(vec3 normal, vec3 toLight) {
 }
 
 void main() {
+  // Mirror pass: discard geometry below the water plane so the reflection RT
+  // does not pick up undersides / floor-adjacent noise from odd angles.
+  if (uClipBelowY < 1e20 && vWorldPosition.y < uClipBelowY) discard;
   vec3 textureColor = texture(uTexture, vUV).rgb;
   vec3 albedo = uBaseColor.rgb * mix(vec3(1.0), textureColor, uTextureEnabled);
   vec3 normal = normalize(vNormal);
@@ -325,7 +332,7 @@ void main() { }`;
 
 function waterVertexShader() {
   return `#version 300 es
-precision mediump float;
+precision highp float;
 layout(location = 0) in vec3 aPosition;
 layout(location = 1) in vec3 aNormal;
 layout(location = 2) in vec2 aUV;
@@ -333,6 +340,7 @@ uniform mat4 uModel;
 uniform mat4 uViewProjection;
 uniform mat4 uReflectionViewProjection;
 uniform float uTime;
+uniform float uPlaneY;
 out vec3 vWorldPosition;
 out vec3 vNormal;
 out vec4 vReflectionClipPosition;
@@ -355,7 +363,10 @@ void main() {
   vec4 worldPosition = uModel * vec4(local, 1.0);
   vWorldPosition = worldPosition.xyz;
   vNormal = normalize(mat3(uModel) * localNormal);
-  vReflectionClipPosition = uReflectionViewProjection * worldPosition;
+  // Sample the planar mirror, not the displaced dome — otherwise side/grazing
+  // views shear neon letters away from their true mirror points.
+  vec4 planePosition = vec4(worldPosition.x, uPlaneY, worldPosition.z, 1.0);
+  vReflectionClipPosition = uReflectionViewProjection * planePosition;
   vRadial = radial;
   gl_Position = uViewProjection * worldPosition;
 }`;
@@ -363,7 +374,7 @@ void main() {
 
 function waterFragmentShader() {
   return `#version 300 es
-precision mediump float;
+precision highp float;
 in vec3 vWorldPosition;
 in vec3 vNormal;
 in vec4 vReflectionClipPosition;
@@ -383,46 +394,56 @@ out vec4 outColor;
 
 vec2 softWave(vec2 p, float t) {
   return vec2(
-    sin(p.y * 2.0 + t * 0.7) * 0.62 + sin(p.x * 1.3 + p.y * 0.85 + t * 0.4) * 0.38,
-    cos(p.x * 1.75 - t * 0.58) * 0.62 + cos(p.y * 1.25 - p.x * 0.7 - t * 0.35) * 0.38
+    sin(p.y * 1.7 + t * 0.55) * 0.62 + sin(p.x * 1.1 + p.y * 0.7 + t * 0.32) * 0.38,
+    cos(p.x * 1.5 - t * 0.48) * 0.62 + cos(p.y * 1.1 - p.x * 0.6 - t * 0.28) * 0.38
   );
 }
 
-vec3 sampleReflection(vec2 uv, float texel, float mode) {
-  vec3 color = texture(uReflectionTexture, uv).rgb;
-  if (mode < 0.5) return color;
-  vec2 o = vec2(texel * 1.5);
-  if (mode < 1.5) {
-    color = color * 0.4;
-    color += texture(uReflectionTexture, uv + vec2(o.x, 0.0)).rgb * 0.15;
-    color += texture(uReflectionTexture, uv - vec2(o.x, 0.0)).rgb * 0.15;
-    color += texture(uReflectionTexture, uv + vec2(0.0, o.y)).rgb * 0.15;
-    color += texture(uReflectionTexture, uv - vec2(0.0, o.y)).rgb * 0.15;
-    return color;
-  }
-  color = color * 0.28;
-  color += texture(uReflectionTexture, uv + vec2(o.x, 0.0)).rgb * 0.12;
-  color += texture(uReflectionTexture, uv - vec2(o.x, 0.0)).rgb * 0.12;
-  color += texture(uReflectionTexture, uv + vec2(0.0, o.y)).rgb * 0.12;
-  color += texture(uReflectionTexture, uv - vec2(0.0, o.y)).rgb * 0.12;
-  color += texture(uReflectionTexture, uv + o).rgb * 0.06;
-  color += texture(uReflectionTexture, uv - o).rgb * 0.06;
-  color += texture(uReflectionTexture, uv + vec2(o.x, -o.y)).rgb * 0.06;
-  color += texture(uReflectionTexture, uv + vec2(-o.x, o.y)).rgb * 0.06;
+// Soft multi-tap sample + mip bias so bright neon edges do not stair-step.
+vec3 sampleReflection(vec2 uv, float texel, float mode, float extraLod) {
+  float lodBias = (mode < 1.5 ? 0.7 : 1.05) + extraLod;
+  vec2 o = vec2(texel * (mode < 1.5 ? 1.35 : 2.05) * (1.0 + extraLod * 0.4));
+  vec3 color = texture(uReflectionTexture, uv, lodBias).rgb * 0.28;
+  color += texture(uReflectionTexture, uv + vec2(o.x, 0.0), lodBias).rgb * 0.12;
+  color += texture(uReflectionTexture, uv - vec2(o.x, 0.0), lodBias).rgb * 0.12;
+  color += texture(uReflectionTexture, uv + vec2(0.0, o.y), lodBias).rgb * 0.12;
+  color += texture(uReflectionTexture, uv - vec2(0.0, o.y), lodBias).rgb * 0.12;
+  // Rotated taps catch diagonal neon strokes that axis-aligned samples miss.
+  vec2 r = o * 0.72;
+  color += texture(uReflectionTexture, uv + vec2(r.x, r.y), lodBias).rgb * 0.06;
+  color += texture(uReflectionTexture, uv + vec2(-r.x, r.y), lodBias).rgb * 0.06;
+  color += texture(uReflectionTexture, uv + vec2(r.x, -r.y), lodBias).rgb * 0.06;
+  color += texture(uReflectionTexture, uv + vec2(-r.x, -r.y), lodBias).rgb * 0.06;
+  if (mode < 1.5) return color;
+  vec2 d = o * 1.35;
+  color = color * 0.78;
+  color += texture(uReflectionTexture, uv + d, lodBias).rgb * 0.055;
+  color += texture(uReflectionTexture, uv - d, lodBias).rgb * 0.055;
+  color += texture(uReflectionTexture, uv + vec2(d.x, -d.y), lodBias).rgb * 0.055;
+  color += texture(uReflectionTexture, uv + vec2(-d.x, d.y), lodBias).rgb * 0.055;
   return color;
 }
 
 void main() {
   vec3 viewDirection = normalize(uCameraPosition - vWorldPosition);
   float interior = 1.0 - vRadial;
-  vec2 wave = softWave(vWorldPosition.xz, uTime) * (0.28 + interior * 0.55);
-  vec3 surfaceNormal = normalize(vNormal + vec3(wave.x * 0.03, 0.0, wave.y * 0.03));
-  vec2 reflectionUV = vReflectionClipPosition.xy / vReflectionClipPosition.w * 0.5 + 0.5;
-  reflectionUV += wave * 0.0018 * interior;
-  reflectionUV = clamp(reflectionUV, vec2(0.003), vec2(0.997));
-  vec3 reflection = sampleReflection(reflectionUV, uTexelSize, uWaterBlur);
+  // Keep undulation gentle so reflection texels are not sheared into jaggies.
+  vec2 wave = softWave(vWorldPosition.xz, uTime) * (0.18 + interior * 0.35);
+  vec3 surfaceNormal = normalize(vNormal + vec3(wave.x * 0.022, 0.0, wave.y * 0.022));
   float facing = clamp(dot(surfaceNormal, viewDirection), 0.0, 1.0);
-  float fresnel = pow(1.0 - facing, 2.4);
+  float clipW = max(vReflectionClipPosition.w, 1e-4);
+  vec2 reflectionUV = vReflectionClipPosition.xy / clipW * 0.5 + 0.5;
+  // Almost no UV shear at grazing — small warps become large sideways slips.
+  reflectionUV += wave * 0.00055 * interior * facing * facing;
+  // Soft border fade: grazing angles push UVs toward the map edge — blend to tint
+  // instead of hard-clamping into a harsh seam.
+  float edge = min(min(reflectionUV.x, reflectionUV.y), min(1.0 - reflectionUV.x, 1.0 - reflectionUV.y));
+  float edgeFade = smoothstep(0.0, 0.09, edge) * step(0.0, vReflectionClipPosition.w);
+  reflectionUV = clamp(reflectionUV, vec2(0.003), vec2(0.997));
+  // Stronger fresnel at grazing so side views still read as wet glass.
+  float fresnel = pow(1.0 - facing, 2.15);
+  float grazing = pow(1.0 - facing, 3.2);
+  vec3 reflection = sampleReflection(reflectionUV, uTexelSize, uWaterBlur, grazing * 0.75);
   vec3 lightDirection = normalize(uLightPosition - vWorldPosition);
   float glint = pow(max(dot(reflect(-lightDirection, surfaceNormal), viewDirection), 0.0), 80.0);
   vec3 neonDirection = normalize(uNeonPosition - vWorldPosition);
@@ -432,15 +453,19 @@ void main() {
   vec3 deepTint = uWaterColor * 1.35;
   vec3 rimTint = mix(uWaterColor, vec3(0.06, 0.1, 0.09), 0.45);
   vec3 tint = mix(rimTint, deepTint, interior * interior);
-  float reflectAmount = 0.62 + fresnel * 0.32 + interior * 0.06;
-  vec3 surface = mix(tint, reflection, reflectAmount);
-  surface += vec3(0.5, 0.68, 0.62) * glint * (0.12 + interior * 0.14);
+  reflection = mix(tint, reflection, edgeFade);
+  float reflectAmount = 0.58 + fresnel * 0.36 + interior * 0.05 + grazing * 0.08;
+  reflectAmount *= mix(0.82, 1.0, edgeFade);
+  vec3 surface = mix(tint, reflection, clamp(reflectAmount, 0.0, 0.96));
+  surface += vec3(0.5, 0.68, 0.62) * glint * (0.12 + interior * 0.14 + grazing * 0.08);
   surface += uNeonColor * neonGlint * neonFalloff * (0.28 + interior * 0.18);
   surface = surface / (surface + vec3(0.9));
   surface = pow(surface, vec3(0.9));
   float body = smoothstep(1.0, 0.36, vRadial);
   float meniscus = smoothstep(1.0, 0.68, vRadial);
   float alpha = uOpacity * mix(0.06, 1.0, pow(body, 0.72)) * mix(0.18, 1.0, meniscus);
+  // Slightly lift opacity at grazing so the sheet does not vanish from the side.
+  alpha = clamp(alpha + grazing * 0.08 * interior, 0.0, 1.0);
   if (alpha < 0.012) discard;
   outColor = vec4(surface, alpha);
 }`;
@@ -690,6 +715,7 @@ export function createImageBasedRT(gl, options = {}) {
     gloss: gl.getUniformLocation(renderProgram, "uGloss"),
     shadowTexel: gl.getUniformLocation(renderProgram, "uShadowTexel"),
     pcfMode: gl.getUniformLocation(renderProgram, "uPcfMode"),
+    clipBelowY: gl.getUniformLocation(renderProgram, "uClipBelowY"),
   };
 
   const depthUniforms = {
@@ -708,6 +734,7 @@ export function createImageBasedRT(gl, options = {}) {
     neonColor: gl.getUniformLocation(waterProgram, "uNeonColor"),
     waterColor: gl.getUniformLocation(waterProgram, "uWaterColor"),
     time: gl.getUniformLocation(waterProgram, "uTime"),
+    planeY: gl.getUniformLocation(waterProgram, "uPlaneY"),
     neonIntensity: gl.getUniformLocation(waterProgram, "uNeonIntensity"),
     opacity: gl.getUniformLocation(waterProgram, "uOpacity"),
     texelSize: gl.getUniformLocation(waterProgram, "uTexelSize"),
@@ -741,29 +768,93 @@ export function createImageBasedRT(gl, options = {}) {
   function makeReflectionTarget(size) {
     if (reflectionTarget) {
       gl.deleteFramebuffer(reflectionTarget.framebuffer);
+      if (reflectionTarget.resolveFramebuffer && reflectionTarget.resolveFramebuffer !== reflectionTarget.framebuffer) {
+        gl.deleteFramebuffer(reflectionTarget.resolveFramebuffer);
+      }
       gl.deleteTexture(reflectionTarget.texture);
-      gl.deleteRenderbuffer(reflectionTarget.depthBuffer);
+      if (reflectionTarget.depthBuffer) gl.deleteRenderbuffer(reflectionTarget.depthBuffer);
+      if (reflectionTarget.msColor) gl.deleteRenderbuffer(reflectionTarget.msColor);
+      if (reflectionTarget.msDepth) gl.deleteRenderbuffer(reflectionTarget.msDepth);
     }
+
+    const maxSamples = gl.getParameter(gl.MAX_SAMPLES) || 0;
+    const wanted = preset.reflectionSamples || 0;
+    const samples = wanted > 0 && maxSamples >= 2 ? Math.min(wanted, maxSamples) : 0;
+
     const texture = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, texture);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, size, size, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    // Mipmaps + LOD bias in the water shader soften jagged neon edges.
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    const depthBuffer = gl.createRenderbuffer();
-    gl.bindRenderbuffer(gl.RENDERBUFFER, depthBuffer);
-    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, size, size);
-    const framebuffer = gl.createFramebuffer();
-    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+    gl.generateMipmap(gl.TEXTURE_2D);
+
+    const resolveFramebuffer = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, resolveFramebuffer);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
-    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, depthBuffer);
     gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
+
+    let framebuffer = resolveFramebuffer;
+    let depthBuffer = null;
+    let msColor = null;
+    let msDepth = null;
+
+    if (samples >= 2) {
+      // Render into a multisampled FBO, then blit → texture for smoother neon edges.
+      msColor = gl.createRenderbuffer();
+      gl.bindRenderbuffer(gl.RENDERBUFFER, msColor);
+      gl.renderbufferStorageMultisample(gl.RENDERBUFFER, samples, gl.RGBA8, size, size);
+      msDepth = gl.createRenderbuffer();
+      gl.bindRenderbuffer(gl.RENDERBUFFER, msDepth);
+      gl.renderbufferStorageMultisample(gl.RENDERBUFFER, samples, gl.DEPTH_COMPONENT24, size, size);
+      framebuffer = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+      gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.RENDERBUFFER, msColor);
+      gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, msDepth);
+      gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
+    } else {
+      depthBuffer = gl.createRenderbuffer();
+      gl.bindRenderbuffer(gl.RENDERBUFFER, depthBuffer);
+      gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, size, size);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, resolveFramebuffer);
+      gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, depthBuffer);
+    }
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
     if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
       throw new Error("Reflection framebuffer is incomplete.");
     }
+    if (samples >= 2) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, resolveFramebuffer);
+      if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+        throw new Error("Reflection resolve framebuffer is incomplete.");
+      }
+    }
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    reflectionTarget = { framebuffer, texture, depthBuffer, size };
+    reflectionTarget = {
+      framebuffer,
+      resolveFramebuffer,
+      texture,
+      depthBuffer,
+      msColor,
+      msDepth,
+      samples,
+      size,
+    };
+  }
+
+  function resolveReflection() {
+    if (reflectionTarget.samples >= 2) {
+      const size = reflectionTarget.size;
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, reflectionTarget.framebuffer);
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, reflectionTarget.resolveFramebuffer);
+      gl.blitFramebuffer(0, 0, size, size, 0, 0, size, size, gl.COLOR_BUFFER_BIT, gl.LINEAR);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    }
+    gl.bindTexture(gl.TEXTURE_2D, reflectionTarget.texture);
+    gl.generateMipmap(gl.TEXTURE_2D);
   }
 
   function allocateTargets() {
@@ -796,14 +887,23 @@ export function createImageBasedRT(gl, options = {}) {
     return { cameraPosition, viewProjection: mat4Multiply(projection, view), target };
   }
 
-  function buildMirroredCamera(camera, target, aspect, planeY = 0) {
+  function buildMirroredCamera(camera, target, _aspect, planeY = 0) {
     const reflectedPosition = [
       camera.cameraPosition[0],
       planeY - (camera.cameraPosition[1] - planeY),
       camera.cameraPosition[2],
     ];
     const reflectedTarget = [target[0], planeY - (target[1] - planeY), target[2]];
-    const projection = mat4Perspective(Math.PI / 2.5, aspect, 0.1, 40);
+    // Reflection target is always square — use aspect 1.0 so side/grazing views
+    // are not stretched by the main viewport aspect ratio.
+    const camHeight = Math.max(0.2, Math.abs(camera.cameraPosition[1] - planeY));
+    // Wider FOV when the eye is low so neon/sign stay inside the capture cone.
+    const fov =
+      camHeight < 1.8 ? Math.PI / 2.25 :
+      camHeight < 2.8 ? Math.PI / 2.5 :
+      camHeight < 4.0 ? Math.PI / 2.7 :
+      Math.PI / 2.9;
+    const projection = mat4Perspective(fov, 1.0, 0.08, 48);
     const view = mat4LookAt(reflectedPosition, reflectedTarget, [0, -1, 0]);
     return { cameraPosition: reflectedPosition, viewProjection: mat4Multiply(projection, view) };
   }
@@ -867,6 +967,7 @@ export function createImageBasedRT(gl, options = {}) {
     debugMarker,
     clearColor = [0.028, 0.055, 0.075, 1],
     lightColor = [1.0, 0.76, 0.58],
+    clipBelowY = null,
   }) {
     gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
     if (framebuffer) {
@@ -883,6 +984,7 @@ export function createImageBasedRT(gl, options = {}) {
     gl.uniformMatrix4fv(renderUniforms.lightViewProjection, false, light.lightViewProjection);
     gl.uniform3fv(renderUniforms.lightPosition, light.lightPosition);
     gl.uniform3fv(renderUniforms.lightColor, lightColor);
+    gl.uniform1f(renderUniforms.clipBelowY, clipBelowY == null ? 1e21 : clipBelowY);
     gl.uniform3fv(renderUniforms.neonPosition, localLight.position);
     gl.uniform3fv(renderUniforms.neonColor, localLight.color);
     gl.uniform1f(renderUniforms.neonIntensity, localLight.intensity);
@@ -926,6 +1028,7 @@ export function createImageBasedRT(gl, options = {}) {
     gl.uniform3fv(waterUniforms.neonColor, localLight.color);
     gl.uniform3fv(waterUniforms.waterColor, water.color || [0.014, 0.085, 0.11]);
     gl.uniform1f(waterUniforms.time, time);
+    gl.uniform1f(waterUniforms.planeY, water.planeY ?? 0);
     gl.uniform1f(waterUniforms.neonIntensity, localLight.intensity);
     gl.uniform1f(waterUniforms.opacity, water.opacity ?? 0.94);
     gl.uniform1f(waterUniforms.texelSize, 1 / reflectionTarget.size);
@@ -994,6 +1097,7 @@ export function createImageBasedRT(gl, options = {}) {
     }
 
     if (runReflection) {
+      const planeY = water?.planeY ?? 0;
       renderOpaque({
         canvas,
         camera: reflectionCamera,
@@ -1006,7 +1110,9 @@ export function createImageBasedRT(gl, options = {}) {
         textureEnabled,
         debugMarker: null,
         clearColor,
+        clipBelowY: planeY + 0.02,
       });
+      resolveReflection();
       lastReflectionKey = reflectionKey;
       lastReflectionCamera = reflectionCamera;
     }

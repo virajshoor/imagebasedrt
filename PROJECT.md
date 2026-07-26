@@ -132,9 +132,11 @@ scene meshes
 
 | Quality | Shadow | Reflection | PCF | Water blur | Max DPR | Refresh |
 | --- | ---: | ---: | --- | --- | ---: | --- |
-| Low | 256px | 256px | 1-tap | 1-tap | 1.0 | Shadow/reflection every 2 frames when still |
-| Balanced | 512px | 384px | 4-tap diagonal | 5-tap | 1.0 | Reflection every 2 frames |
-| High | 1024px | 768px | 3x3 | 9-tap | 1.5 | Every frame |
+| Low | 256px | 640px · 2× MSAA | 1-tap | soft + mips | 1.0 | Shadow every 2 frames when still |
+| Balanced | 512px | 1024px · 4× MSAA | 4-tap diagonal | soft + mips | 1.0 | Every frame |
+| High | 1024px | 1536px · 4× MSAA | 3x3 | soft + mips | 1.5 | Every frame |
+
+Reflection images are rendered with MSAA, resolved into a mipmapped texture, then sampled with a multi-tap LOD-biased kernel so neon edges stay smooth in the puddle instead of stair-stepping.
 
 Additional lower-end choices in the implementation:
 
@@ -189,6 +191,7 @@ Architecture and development record, including the company integration path, qua
 9. The method was extracted into `implementation.js` so the demo and the reusable RT-replacement API are separate, and quality presets were retuned for lower-end GPUs.
 10. Neon strokes were merged into batched meshes and shadow/reflection passes gained temporal refresh intervals, cutting draw calls (~12 + 2) while holding interactive frame rates.
 11. Lit/water shading gained wrap lighting, fresnel rim, height fog, and clearer puddle reflections for a denser look without post-process bloom.
+12. Multi-angle puddle fix: mirrored projection uses square aspect (matching the RT) with height-based FOV; reflection UVs project from the flat mirror plane (not the dome); soft UV edge fade + stronger grazing fresnel keep side views clean.
 
 ## Verification
 
@@ -220,7 +223,7 @@ Serve locally and open in Playwright. Checks should include:
 ## Known limitations
 
 - There is no physically correct ray tracing, refraction, global illumination, or multi-bounce reflection.
-- The reflection is a single mirrored color image. Objects outside the mirrored camera's capture can disappear from the puddle.
+- The reflection is a single mirrored color image. Objects outside the mirrored camera's capture can disappear from the puddle; soft edge fade blends those regions into water tint.
 - The water surface is a procedural dome plus soft undulation; it is not a fluid simulation.
 - Neon letters are assembled from box strokes rather than true bent glass tubes.
 - `implementation.js` expects the host app to supply meshes, materials, and a planar water object; it does not import glTF or manage assets.

@@ -386,10 +386,10 @@ function renderScene(now) {
   telemetryTick += 1;
   if (telemetryTick % 8 === 0) {
     el.renderer.textContent = "WEBGL2";
-    el.shadow.textContent = `${stats.shadowSize}px`;
+    el.shadow.textContent = `${stats.reflectionSize}px`;
     el.draws.textContent = `${enabledDrawCount} + 2`;
     el.frame.textContent = `${Math.round(fps)} FPS`;
-    el.shadow.title = `Shadow ${stats.shadowSize}px / reflection ${stats.reflectionSize}px (${stats.quality})`;
+    el.shadow.title = `Reflection ${stats.reflectionSize}px / shadow ${stats.shadowSize}px (${stats.quality})`;
     el.draws.title = "Batched scene draws plus shadow and reflection passes";
   }
 }
@@ -459,7 +459,11 @@ window.addEventListener("keydown", (event) => {
   const key = event.key.toLowerCase();
   if (["w", "a", "s", "d", "q", "e", "shift", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(key)) {
     event.preventDefault();
-    keys.add(key === "arrowup" ? "w" : key === "arrowdown" ? "s" : key === "arrowleft" ? "a" : key === "arrowright" ? "d" : key);
+    const mapped = key === "arrowup" ? "w" : key === "arrowdown" ? "s" : key === "arrowleft" ? "a" : key === "arrowright" ? "d" : key;
+    // Nudge light immediately so quick taps register, then hold continues in the loop.
+    if (mapped === "q" && !keys.has("q")) state.lightX = clamp(state.lightX - 0.35, -5.5, 5.5);
+    if (mapped === "e" && !keys.has("e")) state.lightX = clamp(state.lightX + 0.35, -5.5, 5.5);
+    keys.add(mapped);
   }
   if (key === "r") resetView();
 });
@@ -500,7 +504,7 @@ rebuildScene();
 resize();
 
 window.IBRT = {
-  version: "0.5.1",
+  version: "0.5.2",
   qualityPresets: QUALITY_PRESETS,
   renderer: ibrt,
   state,

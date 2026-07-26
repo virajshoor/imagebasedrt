@@ -9,18 +9,19 @@ The browser demo ships two scenes — **Midnight Bar** (default) and **Neon Atri
 The prototype has moved from an initial 2D view-cell experiment to a stable WebGL2 3D baseline. It currently includes:
 
 - A portable method module (`src/implementation.js`) that companies can drop into their own WebGL2 apps.
+- A **minimal host example** at `examples/minimal/` that imports only `implementation.js`.
 - A demo shell (`src/main.js`) with scene switching, orbit/WASD controls, and inspector UI.
-- **Midnight Bar** (`src/scenes/midnightBar.js`, IBRT **0.6.5**): lathed bottles, stadium bar counter, stools, pendants, draft taps, booths, BAR neon, wet-floor puddle; same-material batches via `mergeMeshInstances` (~42 draws).
+- **Midnight Bar** (`src/scenes/midnightBar.js`, IBRT **0.7.0**): lathed bottles with liquid cores, stadium bar, stools, pendants, draft taps, booths, BAR neon, wet-floor puddle; batches via `mergeMeshInstances` (~45 draws).
 - **Neon Atrium** (`src/scenes/neonAtrium.js`): lighter Buildathon atrium with letterform NEON and a feathered puddle.
 - Curved mesh helpers: cylinder, lathe, torus, capsule, stadium (plus cube / plane / sphere / puddle) and `mergeMeshInstances` for batched props.
-- BAR neon bowls are wall-facing elliptical tubes (`makeMesh`); stems are merged cylinders — not hatched box ovals.
+- BAR neon: angled cyan **A**, pink B/R stems, wall-facing elliptical tube bowls (`makeMesh`).
 - Inspector pitch + “Try this” tips so judges understand the method without reading the README.
 - Interactive orbit camera, zoom, WASD/arrow movement, and camera bounds per scene.
 - A dynamic key light that can be moved with `Q` / `E`.
 - Quality-scaled soft shadows (1-tap, 4-tap diagonal, or 3x3 PCF) from a depth map.
 - MSAA + mipmapped reflection images with multi-tap LOD-biased water sampling.
 - Small procedural image textures (cached across quality switches).
-- Atmosphere helpers in the lit pass: wrap lighting, fresnel rim, cheap height fog.
+- Atmosphere helpers in the lit pass: wrap lighting, fresnel rim, cheap height fog, floor-contact AO.
 - Adjustable GPU quality presets for lower-end / integrated GPUs.
 - A debug light marker and runtime telemetry panel.
 
@@ -186,7 +187,8 @@ Non-blocky assets are authored as:
 | `buildTorus` | Stool seat rings and foot rings |
 | `buildCapsule` | Booth backs, curtains, tap spouts |
 | `buildSphere` | Pendant globes, citrus, rail connectors, corner orbs |
-| `makeMesh` (ellipse tubes) | Smooth B / R neon bowls on the back wall |
+| `buildLathe` (`liquid`) | Inner wine / whiskey fills for clear glass bottles |
+| `makeMesh` (ellipse tubes) | Smooth B / R neon bowls + A apex ring on the back wall |
 
 ## Source map
 
@@ -232,6 +234,7 @@ Architecture and development record, including the company integration path, qua
 14. Buildathon polish: `mergeMeshInstances` batches same-material bar props; Low preset uses cheaper mesh density; inspector pitch / Try this copy; README “What to look for”.
 15. Visual QA (0.6.4): stronger puddle `reflectAmount` + milder balanced water blur/LOD; BAR neon rebuilt as cylinder stems + elliptical tube bowls; default camera reframed so the wet floor reads at a glance; bottles seated on shelf tops; booth brass trim corrected.
 16. Reliability polish (0.6.5): Low water path is true 5-tap; shadow/reflection dirty keys include neon + `contentVersion`; freeze UV warp when reusing reflection RT; shell title/comments drop “View Cell Lab”; remove unused footRail torus mesh.
+17. Portable showcase (0.7.0): `examples/minimal/` drop-in host; lit-pass floor-contact AO; BAR letter A angled tubes + apex ring; clear-glass liquid cores; docs sync.
 
 ## Verification
 
@@ -240,18 +243,20 @@ node --check src/implementation.js
 node --check src/main.js
 node --check src/scenes/midnightBar.js
 node --check src/scenes/neonAtrium.js
+node --check examples/minimal/main.js
 ```
 
 Serve locally and open in a WebGL2 browser. Checks should include:
 
 - No page/console errors; WebGL `getError() === 0`.
 - `window.IBRT.renderer` exists and exposes `renderFrame` / `setQuality`.
-- Default scene is Midnight Bar (~42 + 2 draws); switching to Neon Atrium updates inspector copy (~12 + 2).
+- Default scene is Midnight Bar (~45 + 2 draws); switching to Neon Atrium updates inspector copy (~12 + 2).
 - Quality switch rebuilds targets (high → 1536px reflection); Low keeps interactive FPS on iGPU.
 - Side / grazing orbits still show puddle neon / stools without severe shear.
 - Neon toggle drops BAR tubes + local pink light (and their reflection contribution).
-- Module imports succeed over HTTP; `window.IBRT.version` reports `0.6.5`.
+- Module imports succeed over HTTP; `window.IBRT.version` reports `0.7.0`.
 - Neon toggle immediately refreshes shadow/reflection (no stale BAR in the puddle on Low).
+- `/examples/minimal/` renders floor, cube, sphere, and puddle with orbit drag (no console errors).
 
 ## Lower-end GPU considerations
 
@@ -279,7 +284,7 @@ Serve locally and open in a WebGL2 browser. Checks should include:
 
 ## Roadmap
 
-1. Publish a minimal third-party example that imports only `implementation.js`.
+1. ~~Publish a minimal third-party example that imports only `implementation.js`.~~ **Done in 0.7.0** (`examples/minimal/`).
 2. Define an external capture manifest with color image, depth image, camera pose, bounds, and cell neighbors.
 3. Replace selected proxy objects with view-dependent image/depth impostors.
 4. Add depth-assisted reprojection to reduce disocclusion and edge ghosting.

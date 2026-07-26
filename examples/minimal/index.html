@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Image Based RT — Minimal Host</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #061018; color: #c8d4de; font-family: ui-sans-serif, system-ui, sans-serif; }
+      canvas { display: block; width: 100%; height: 100%; }
+      .hint {
+        position: fixed; left: 12px; bottom: 12px; padding: 8px 12px;
+        background: rgba(6, 16, 24, 0.72); border: 1px solid rgba(120, 160, 180, 0.25);
+        font-size: 12px; letter-spacing: 0.02em; pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="viewport" aria-label="Minimal Image Based RT host"></canvas>
+    <div class="hint">Minimal host · drag to orbit · Low quality · imports only implementation.js</div>
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>

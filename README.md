@@ -35,8 +35,9 @@ A denser game-style lounge for stressing the reflection path:
 - Lathed bottles, tumblers, coupes, and shakers (solids of revolution — not cubes)
 - Curved stadium bar counter, brass foot rail, velvet stools with torus rings
 - Pendant globes, draft taps, booth seating, back-bar shelves
-- Pink/cyan **BAR** neon (cylinder stems + smooth elliptical tube bowls) + wet-floor puddle
-- Same-material props batched with `mergeMeshInstances` (~42 draws vs ~130 unbatched)
+- Pink/cyan **BAR** neon (angled A + cylinder stems + elliptical bowls) + wet-floor puddle
+- Clear glass bottles with inner liquid cores; floor-contact AO plants stools and bar legs
+- Same-material props batched with `mergeMeshInstances` (~45 draws vs ~130 unbatched)
 
 ### Neon Atrium — SCENE / 001
 
@@ -102,6 +103,15 @@ The portable method lives in one file: [`src/implementation.js`](./src/implement
 
 The portable implementation lives in [`src/implementation.js`](./src/implementation.js). Demo scenes and UI live in [`src/main.js`](./src/main.js) + [`src/scenes/`](./src/scenes/).
 
+**Minimal host example** (imports only `implementation.js`, no demo shell):
+
+```bash
+python3 -m http.server 8080
+# open http://localhost:8080/examples/minimal/
+```
+
+See [`examples/minimal/main.js`](./examples/minimal/main.js).
+
 ```js
 import { createImageBasedRT, recommendContextOptions } from "./implementation.js";
 
@@ -118,10 +128,13 @@ ibrt.renderFrame({
   water,
   time: performance.now() / 1000,
   aspect: width / height,
+  contentVersion, // bump when neon/objects toggle
 });
 ```
 
 Mesh helpers available on the factory (and as named exports): `buildCube`, `buildPlane`, `buildSphere`, `buildCylinder`, `buildLathe`, `buildTorus`, `buildCapsule`, `buildStadium`, `buildPuddle`, `mergeCubeInstances`, `mergeMeshInstances`, `createTexture`.
+
+Lit surfaces get a cheap height-based contact AO near the floor so props read planted without an extra pass.
 
 ### Quality presets (lower-end first)
 
@@ -143,6 +156,8 @@ imagebasedrt/
 ├── styles.css                 Lab UI
 ├── PROJECT.md                 Architecture & iteration notes
 ├── README.md                  You are here
+├── examples/
+│   └── minimal/               Drop-in host (implementation.js only)
 └── src/
     ├── implementation.js      Portable Image Based RT method + mesh helpers
     ├── main.js                UI, input, scene switcher, render loop

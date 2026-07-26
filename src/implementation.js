@@ -11,6 +11,8 @@
  *      into a color "reflection image".
  *   3. Composite a water/mirror mesh that samples that image with Fresnel,
  *      soft undulation, and feathered edges.
+ * Lit surfaces also get a cheap height-based contact AO near the floor plane
+ * so proxy props read planted without an extra pass.
  *
  * Usage with the demo shell (Midnight Bar / Neon Atrium):
  *   import { createImageBasedRT, QUALITY_PRESETS } from "./implementation.js";
@@ -304,6 +306,12 @@ void main() {
   lit += uNeonColor * neonSpecular * neonAttenuation;
   lit += uEmissive;
   lit += albedo * vec3(0.04, 0.08, 0.1) * fresnel;
+  // Cheap floor-contact AO: darken near y≈0 on upright faces so props plant.
+  // Upward floor faces (normal.y ~ 1) stay largely unaffected.
+  float contactHeight = mix(0.56, 1.0, smoothstep(0.02, 0.52, vWorldPosition.y));
+  float uprightFace = 1.0 - smoothstep(0.35, 0.9, abs(normal.y));
+  float contactAO = mix(1.0, contactHeight, uprightFace * uReceiveShadow);
+  lit *= contactAO;
   // Cheap height fog for depth and atmosphere.
   float fog = smoothstep(4.0, 16.0, length(uCameraPosition - vWorldPosition));
   lit = mix(lit, vec3(0.02, 0.045, 0.07), fog * 0.55);

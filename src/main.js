@@ -330,7 +330,7 @@ rebuildScene({ resetCamera: true });
 resize();
 
 window.IBRT = {
-  version: "0.6.5",
+  version: "0.7.0",
   qualityPresets: QUALITY_PRESETS,
   renderer: ibrt,
   state,

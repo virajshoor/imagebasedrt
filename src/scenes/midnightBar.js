@@ -7,10 +7,11 @@
  *   - Lathed bottles / glassware (solids of revolution)
  *   - Stadium (pill-shaped) bar counter and shelves
  *   - Capsule booths, torus stool rings, pendant spheres
- *   - BAR neon: cylinder stems + smooth elliptical tube bowls
+ *   - BAR neon: cylinder stems + smooth elliptical tube bowls (A uses angled legs)
+ *   - Bottle liquid cores (inner lathes) for clear glassware depth
  *   - Wet-floor puddle that mirrors the back-bar + BAR neon
  *
- * Same-material props batch via `mergeMeshInstances` (~42 opaque draws).
+ * Same-material props batch via `mergeMeshInstances` (~42–45 opaque draws).
  * Consumed by `main.js` via `buildMidnightBar(ibrt, preset)`.
  * Returns a scene descriptor: objects, water, camera defaults, lights, bounds.
  */
@@ -265,11 +266,24 @@ function buildBarNeon(ibrt, tex, detail) {
   appendWallEllipseTube(pinkRingVerts, pinkRingIdx, -1.2, y + 0.22, z, 0.3, 0.22, tube, ringSegs, tubeSegs);
   appendWallEllipseTube(pinkRingVerts, pinkRingIdx, -1.18, y - 0.22, z, 0.34, 0.24, tube, ringSegs, tubeSegs);
 
-  // Letter A — two legs + crossbar (cyan for contrast in the puddle).
-  pushTubeVert(cyan, -0.45, y, z, 0.96, tube);
-  pushTubeVert(cyan, 0.15, y, z, 0.96, tube);
-  pushTubeHoriz(cyan, -0.15, y - 0.05, z, 0.56, tube);
-  pushTubeHoriz(cyan, -0.15, y + 0.42, z, 0.4, tube);
+  // Letter A — apex + angled legs + crossbar (cyan; matches B/R tube quality).
+  const aApexX = -0.15;
+  const aApexY = y + 0.44;
+  const aLeftX = -0.52;
+  const aRightX = 0.22;
+  const aFootY = y - 0.48;
+  const aLeftDx = aApexX - aLeftX;
+  const aRightDx = aApexX - aRightX;
+  const aDy = aApexY - aFootY;
+  const aLeftLen = Math.hypot(aLeftDx, aDy);
+  const aRightLen = Math.hypot(aRightDx, aDy);
+  pushTube(cyan, [(aLeftX + aApexX) * 0.5, (aFootY + aApexY) * 0.5, z], aLeftLen, tube, Math.atan2(aLeftDx, aDy));
+  pushTube(cyan, [(aRightX + aApexX) * 0.5, (aFootY + aApexY) * 0.5, z], aRightLen, tube, Math.atan2(aRightDx, aDy));
+  pushTubeHoriz(cyan, aApexX, y - 0.02, z, 0.42, tube);
+  // Small apex ring so the peak reads as a continuous neon joint.
+  const cyanRingVerts = [];
+  const cyanRingIdx = [];
+  appendWallEllipseTube(cyanRingVerts, cyanRingIdx, aApexX, aApexY - 0.02, z, 0.1, 0.08, tube * 0.9, Math.max(12, (ringSegs / 2) | 0), tubeSegs);
 
   // Letter R — stem + bowl + diagonal leg.
   pushTubeVert(pinkStems, 0.75, y, z, 0.96, tube);
@@ -307,6 +321,7 @@ function buildBarNeon(ibrt, tex, detail) {
     neonMat(ibrt.mergeMeshInstances(tubeMesh, pinkStems), [1, 0.35, 0.65, 1], [1.8, 0.15, 0.55]),
     neonMat(ibrt.makeMesh(pinkRingVerts, pinkRingIdx), [1, 0.35, 0.65, 1], [1.8, 0.15, 0.55]),
     neonMat(ibrt.mergeMeshInstances(tubeMesh, cyan), [0.35, 0.95, 1, 1], [0.15, 1.4, 1.6]),
+    neonMat(ibrt.makeMesh(cyanRingVerts, cyanRingIdx), [0.35, 0.95, 1, 1], [0.15, 1.4, 1.6]),
   ];
 }
 
@@ -341,6 +356,10 @@ const PROFILES = {
   bottleSlim: [
     [0.0, 0.0], [0.055, 0.0], [0.08, 0.04], [0.085, 0.4], [0.07, 0.65],
     [0.04, 0.85], [0.035, 1.05], [0.04, 1.1], [0.0, 1.1],
+  ],
+  // Inner fill for clear glass — shorter/narrower than the outer bottle lathe.
+  liquid: [
+    [0.0, 0.02], [0.07, 0.02], [0.078, 0.08], [0.08, 0.28], [0.075, 0.4], [0.0, 0.4],
   ],
 };
 
@@ -422,6 +441,7 @@ export function buildMidnightBar(ibrt, preset) {
     coupe: ibrt.buildLathe(PROFILES.coupe, detail.lathe),
     shaker: ibrt.buildLathe(PROFILES.shaker, detail.lathe),
     slim: ibrt.buildLathe(PROFILES.bottleSlim, detail.lathe),
+    liquid: ibrt.buildLathe(PROFILES.liquid, Math.max(8, detail.lathe - 4)),
     puddle: ibrt.buildPuddle(preset.puddleSegments, preset.puddleRings),
   };
 
@@ -560,8 +580,24 @@ export function buildMidnightBar(ibrt, preset) {
     { mesh: meshes.whiskey, x: 2.35, y: shelfTop.high, s: 0.48, color: C.whiskey, tex: tex.amber },
     { mesh: meshes.wine, x: 3.3, y: shelfTop.high, s: 0.5, color: C.redWine, tex: tex.amber },
   ];
+  // Liquid cores for clear glass — two merge draws (wine + whiskey fills).
+  const liquidWine = [];
+  const liquidWhiskey = [];
+  const pushLiquid = (x, y, z, s, kind) => {
+    const instance = {
+      position: [x, y + 0.03 * s, z],
+      scale: [s * 0.7, s * 0.52, s * 0.7],
+    };
+    if (kind === "wine") liquidWine.push(instance);
+    else liquidWhiskey.push(instance);
+  };
+
   for (const item of shelfBottles) {
     addProp(item.mesh, [item.x, item.y, -4.68], [item.s, item.s, item.s], item.color, item.tex, item.gloss ?? 125);
+    // Clear glass bottles get an inner fill so they read as liquid in the puddle.
+    if (item.tex === tex.glass) {
+      pushLiquid(item.x, item.y, -4.68, item.s, item.x < 0 ? "wine" : "whiskey");
+    }
   }
 
   // Counter service joins the same buckets where mesh/material match.
@@ -572,6 +608,8 @@ export function buildMidnightBar(ibrt, preset) {
   addProp(meshes.shaker, [0.35, 1.18, 0.5], [0.5, 0.5, 0.5], C.brass, tex.brass, 140);
   addProp(meshes.whiskey, [1.9, 1.18, 0.4], [0.42, 0.42, 0.42], C.whiskey, tex.amber, 125);
   addProp(meshes.coupe, [0.15, 0.6, 3.45], [0.4, 0.4, 0.4], C.clear, tex.glass, 125);
+  pushLiquid(-1.6, 1.18, 0.55, 0.42, "whiskey");
+  pushLiquid(-1.25, 1.18, 0.7, 0.4, "whiskey");
   for (const bucket of propBuckets.values()) {
     const { cast, receive, neon, emissive, rotationZ } = bucket.extras;
     pushMerged(ibrt, objects, bucket.mesh, bucket.instances, bucket.color, bucket.tex, {
@@ -580,6 +618,16 @@ export function buildMidnightBar(ibrt, preset) {
       receive: receive === false ? false : true,
       neon: !!neon,
       emissive: emissive || [0, 0, 0],
+    });
+  }
+  if (liquidWine.length) {
+    pushMerged(ibrt, objects, meshes.liquid, liquidWine, C.redWine, tex.amber, {
+      gloss: 90, cast: false, receive: true, emissive: [0.04, 0.01, 0.015],
+    });
+  }
+  if (liquidWhiskey.length) {
+    pushMerged(ibrt, objects, meshes.liquid, liquidWhiskey, C.whiskey, tex.amber, {
+      gloss: 90, cast: false, receive: true, emissive: [0.05, 0.02, 0.005],
     });
   }
 

@@ -171,7 +171,7 @@ The puddle is a multi-ring elliptical disc. Vertex UV.x stores radial distance. 
 Demo-only geometry in the scene modules, mounted on a dark housing:
 
 - **Neon Atrium** — letterform **NEON** from merged cube strokes (quality-scaled oval density).
-- **Midnight Bar** — **BAR** from merged cylinder stems + smooth wall-facing elliptical tube bowls (`appendWallEllipseTube` → `makeMesh`). Ring segment counts follow the quality preset (`neonRing`).
+- **Midnight Bar** — **BAR** from angled cyan A legs, pink B/R stems, and smooth wall-facing elliptical tube bowls (`appendWallEllipseTube` → `makeMesh`). Ring segment counts follow the quality preset (`neonRing`).
 
 A local colored light contributes to lit surfaces and the water glint; the letters themselves appear in the mirrored reflection image.
 

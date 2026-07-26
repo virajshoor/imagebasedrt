@@ -270,6 +270,8 @@ node --check src/scenes/neonAtrium.js
 node --check examples/minimal/main.js
 node --check scripts/bake-images.mjs
 node scripts/bake-images.mjs
+# optional visual QA screenshots → /opt/cursor/artifacts/screenshots/
+node scripts/qa-browser.mjs
 ```
 
 Serve locally and open in a WebGL2 browser. Checks should include:

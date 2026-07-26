@@ -114,11 +114,12 @@ async function main() {
     headless: "new",
     args: [
       "--use-angle=swiftshader",
+      "--enable-unsafe-swiftshader",
       "--enable-webgl",
       "--ignore-gpu-blocklist",
       "--no-sandbox",
       "--disable-dev-shm-usage",
-      `--window-size=1280,800`,
+      "--window-size=1280,800",
     ],
     defaultViewport: { width: 1280, height: 800, deviceScaleFactor: 1 },
   });

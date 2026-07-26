@@ -12,7 +12,7 @@
  *   3. Composite a water/mirror mesh that samples that image with Fresnel,
  *      soft undulation, and feathered edges.
  *
- * Usage with the Neon Atrium demo:
+ * Usage with the demo shell (Midnight Bar / Neon Atrium):
  *   import { createImageBasedRT, QUALITY_PRESETS } from "./implementation.js";
  *   const ibrt = createImageBasedRT(gl, { quality: "balanced" });
  *
@@ -608,6 +608,261 @@ export function buildSphere(gl, rings = 12, segments = 18) {
   return makeMesh(gl, vertices, indices);
 }
 
+// ---------------------------------------------------------------------------
+// Curved mesh builders (used by Midnight Bar and any host that needs non-cubes)
+// Vertex layout matches makeMesh: position(3) + normal(3) + uv(2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Unit cylinder along Y from -0.5..0.5.
+ * Set radiusTop ≠ radiusBottom for tapers (stool legs, pendant cups).
+ */
+export function buildCylinder(gl, segments = 24, heightSegments = 1, radiusTop = 1, radiusBottom = 1, capped = true) {
+  const vertices = [];
+  const indices = [];
+  for (let y = 0; y <= heightSegments; y += 1) {
+    const v = y / heightSegments;
+    const yy = v - 0.5;
+    const radius = radiusBottom + (radiusTop - radiusBottom) * v;
+    for (let i = 0; i <= segments; i += 1) {
+      const u = i / segments;
+      const theta = u * Math.PI * 2;
+      const cos = Math.cos(theta);
+      const sin = Math.sin(theta);
+      const nx = cos;
+      const ny = (radiusBottom - radiusTop);
+      const nz = sin;
+      const inv = 1 / (Math.hypot(nx, ny, nz) || 1);
+      vertices.push(cos * radius, yy, sin * radius, nx * inv, ny * inv, nz * inv, u, v);
+    }
+  }
+  for (let y = 0; y < heightSegments; y += 1) {
+    for (let i = 0; i < segments; i += 1) {
+      const a = y * (segments + 1) + i;
+      const b = a + segments + 1;
+      indices.push(a, b, a + 1, a + 1, b, b + 1);
+    }
+  }
+  if (capped && radiusTop > 1e-5) {
+    const center = vertices.length / 8;
+    vertices.push(0, 0.5, 0, 0, 1, 0, 0.5, 0.5);
+    const ringStart = vertices.length / 8;
+    for (let i = 0; i <= segments; i += 1) {
+      const u = i / segments;
+      const theta = u * Math.PI * 2;
+      vertices.push(Math.cos(theta) * radiusTop, 0.5, Math.sin(theta) * radiusTop, 0, 1, 0, 0.5 + Math.cos(theta) * 0.5, 0.5 + Math.sin(theta) * 0.5);
+    }
+    for (let i = 0; i < segments; i += 1) {
+      indices.push(center, ringStart + i, ringStart + i + 1);
+    }
+  }
+  if (capped && radiusBottom > 1e-5) {
+    const center = vertices.length / 8;
+    vertices.push(0, -0.5, 0, 0, -1, 0, 0.5, 0.5);
+    const ringStart = vertices.length / 8;
+    for (let i = 0; i <= segments; i += 1) {
+      const u = i / segments;
+      const theta = u * Math.PI * 2;
+      vertices.push(Math.cos(theta) * radiusBottom, -0.5, Math.sin(theta) * radiusBottom, 0, -1, 0, 0.5 + Math.cos(theta) * 0.5, 0.5 + Math.sin(theta) * 0.5);
+    }
+    for (let i = 0; i < segments; i += 1) {
+      indices.push(center, ringStart + i + 1, ringStart + i);
+    }
+  }
+  return makeMesh(gl, vertices, indices);
+}
+
+/**
+ * Solid of revolution for bottles / glassware.
+ * `profile` is [[radius, y], ...] with y ascending; spun around the Y axis.
+ */
+export function buildLathe(gl, profile, segments = 24) {
+  if (!profile || profile.length < 2) throw new Error("Lathe profile needs at least two points.");
+  const vertices = [];
+  const indices = [];
+  const rings = profile.length;
+  for (let ring = 0; ring < rings; ring += 1) {
+    const [radius, y] = profile[ring];
+    const prev = profile[Math.max(0, ring - 1)];
+    const next = profile[Math.min(rings - 1, ring + 1)];
+    const dy = next[1] - prev[1];
+    const dr = next[0] - prev[0];
+    // Outward normal of the silhouette tangent.
+    let nx = dy;
+    let ny = -dr;
+    const invN = 1 / (Math.hypot(nx, ny) || 1);
+    nx *= invN;
+    ny *= invN;
+    const v = ring / (rings - 1);
+    for (let i = 0; i <= segments; i += 1) {
+      const u = i / segments;
+      const theta = u * Math.PI * 2;
+      const cos = Math.cos(theta);
+      const sin = Math.sin(theta);
+      vertices.push(cos * radius, y, sin * radius, cos * nx, ny, sin * nx, u, v);
+    }
+  }
+  for (let ring = 0; ring < rings - 1; ring += 1) {
+    for (let i = 0; i < segments; i += 1) {
+      const a = ring * (segments + 1) + i;
+      const b = a + segments + 1;
+      indices.push(a, b, a + 1, a + 1, b, b + 1);
+    }
+  }
+  return makeMesh(gl, vertices, indices);
+}
+
+/** Torus in the XZ plane (stool rings, foot rails). Centered at the origin. */
+export function buildTorus(gl, radialSegments = 24, tubularSegments = 16, radius = 1, tube = 0.25) {
+  const vertices = [];
+  const indices = [];
+  for (let i = 0; i <= radialSegments; i += 1) {
+    const v = i / radialSegments;
+    const phi = v * Math.PI * 2;
+    const cosPhi = Math.cos(phi);
+    const sinPhi = Math.sin(phi);
+    for (let j = 0; j <= tubularSegments; j += 1) {
+      const u = j / tubularSegments;
+      const theta = u * Math.PI * 2;
+      const cosTheta = Math.cos(theta);
+      const sinTheta = Math.sin(theta);
+      const x = (radius + tube * cosTheta) * cosPhi;
+      const y = tube * sinTheta;
+      const z = (radius + tube * cosTheta) * sinPhi;
+      const nx = cosTheta * cosPhi;
+      const ny = sinTheta;
+      const nz = cosTheta * sinPhi;
+      vertices.push(x, y, z, nx, ny, nz, u, v);
+    }
+  }
+  for (let i = 0; i < radialSegments; i += 1) {
+    for (let j = 0; j < tubularSegments; j += 1) {
+      const a = i * (tubularSegments + 1) + j;
+      const b = a + tubularSegments + 1;
+      indices.push(a, b, a + 1, a + 1, b, b + 1);
+    }
+  }
+  return makeMesh(gl, vertices, indices);
+}
+
+/**
+ * Capsule along Y: cylinder with hemispherical caps.
+ * Useful for booth backs, curtains, and soft props without boxy silhouettes.
+ */
+export function buildCapsule(gl, rings = 8, segments = 20) {
+  const vertices = [];
+  const indices = [];
+  const halfCyl = 0.5;
+  // Hemisphere top + cylinder band samples + hemisphere bottom via stacked rings.
+  const totalRings = rings * 2 + 2;
+  for (let ring = 0; ring <= totalRings; ring += 1) {
+    const t = ring / totalRings;
+    let y;
+    let radius;
+    let ny;
+    if (t < 0.25) {
+      const phi = (t / 0.25) * (Math.PI * 0.5);
+      y = halfCyl + Math.sin(phi);
+      radius = Math.cos(phi);
+      ny = Math.sin(phi);
+    } else if (t > 0.75) {
+      const phi = ((t - 0.75) / 0.25) * (Math.PI * 0.5);
+      y = -halfCyl - Math.sin(phi);
+      radius = Math.cos(phi);
+      ny = -Math.sin(phi);
+    } else {
+      const u = (t - 0.25) / 0.5;
+      y = halfCyl - u * (halfCyl * 2);
+      radius = 1;
+      ny = 0;
+    }
+    for (let i = 0; i <= segments; i += 1) {
+      const u = i / segments;
+      const theta = u * Math.PI * 2;
+      const cos = Math.cos(theta);
+      const sin = Math.sin(theta);
+      const nx = cos;
+      const nz = sin;
+      const inv = 1 / (Math.hypot(nx, ny, nz) || 1);
+      vertices.push(cos * radius, y, sin * radius, nx * inv, ny * inv, nz * inv, u, t);
+    }
+  }
+  for (let ring = 0; ring < totalRings; ring += 1) {
+    for (let i = 0; i < segments; i += 1) {
+      const a = ring * (segments + 1) + i;
+      const b = a + segments + 1;
+      indices.push(a, b, a + 1, a + 1, b, b + 1);
+    }
+  }
+  return makeMesh(gl, vertices, indices);
+}
+
+/**
+ * Stadium / pill solid in XZ: straight run with semicircle end caps.
+ * Used for the curved bar counter and back-bar shelf planks.
+ */
+export function buildStadium(gl, segments = 28, length = 2, width = 1, height = 0.12) {
+  const vertices = [];
+  const indices = [];
+  const halfLen = Math.max(0.01, length * 0.5 - width * 0.5);
+  const radius = width * 0.5;
+  const ring = [];
+  for (let i = 0; i <= segments; i += 1) {
+    const t = i / segments;
+    const angle = -Math.PI * 0.5 + t * Math.PI;
+    ring.push([halfLen + Math.cos(angle) * radius, Math.sin(angle) * radius]);
+  }
+  for (let i = 0; i <= segments; i += 1) {
+    const t = i / segments;
+    const angle = Math.PI * 0.5 + t * Math.PI;
+    ring.push([-halfLen + Math.cos(angle) * radius, Math.sin(angle) * radius]);
+  }
+  const topY = height * 0.5;
+  const botY = -height * 0.5;
+  const count = ring.length;
+  // Top face
+  const topCenter = 0;
+  vertices.push(0, topY, 0, 0, 1, 0, 0.5, 0.5);
+  for (let i = 0; i < count; i += 1) {
+    const [x, z] = ring[i];
+    vertices.push(x, topY, z, 0, 1, 0, 0.5 + x / length, 0.5 + z / width);
+  }
+  for (let i = 0; i < count; i += 1) {
+    indices.push(topCenter, 1 + i, 1 + ((i + 1) % count));
+  }
+  // Bottom face
+  const botCenter = vertices.length / 8;
+  vertices.push(0, botY, 0, 0, -1, 0, 0.5, 0.5);
+  const botRing = vertices.length / 8;
+  for (let i = 0; i < count; i += 1) {
+    const [x, z] = ring[i];
+    vertices.push(x, botY, z, 0, -1, 0, 0.5 + x / length, 0.5 + z / width);
+  }
+  for (let i = 0; i < count; i += 1) {
+    indices.push(botCenter, botRing + ((i + 1) % count), botRing + i);
+  }
+  // Side wall
+  const sideStart = vertices.length / 8;
+  for (let i = 0; i < count; i += 1) {
+    const [x0, z0] = ring[i];
+    const [x1, z1] = ring[(i + 1) % count];
+    const mx = (x0 + x1) * 0.5;
+    const mz = (z0 + z1) * 0.5;
+    const nx = mx;
+    const nz = mz;
+    const inv = 1 / (Math.hypot(nx, nz) || 1);
+    const nxx = nx * inv;
+    const nzz = nz * inv;
+    const base = sideStart + i * 4;
+    vertices.push(x0, botY, z0, nxx, 0, nzz, i / count, 0);
+    vertices.push(x1, botY, z1, nxx, 0, nzz, (i + 1) / count, 0);
+    vertices.push(x1, topY, z1, nxx, 0, nzz, (i + 1) / count, 1);
+    vertices.push(x0, topY, z0, nxx, 0, nzz, i / count, 1);
+    indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+  }
+  return makeMesh(gl, vertices, indices);
+}
+
 export function createTexture(gl, draw, size = 128) {
   const image = document.createElement("canvas");
   image.width = size;
@@ -1167,6 +1422,13 @@ export function createImageBasedRT(gl, options = {}) {
     buildCube: () => buildCube(gl),
     buildPlane: () => buildPlane(gl),
     buildSphere: (rings, segments) => buildSphere(gl, rings, segments),
+    buildCylinder: (segments, heightSegments, radiusTop, radiusBottom, capped) =>
+      buildCylinder(gl, segments, heightSegments, radiusTop, radiusBottom, capped),
+    buildLathe: (profile, segments) => buildLathe(gl, profile, segments),
+    buildTorus: (radialSegments, tubularSegments, radius, tube) =>
+      buildTorus(gl, radialSegments, tubularSegments, radius, tube),
+    buildCapsule: (rings, segments) => buildCapsule(gl, rings, segments),
+    buildStadium: (segments, length, width, height) => buildStadium(gl, segments, length, width, height),
     buildPuddle: (segments, rings) => buildPuddle(gl, segments ?? preset.puddleSegments, rings ?? preset.puddleRings),
     mergeCubeInstances: (instances) => mergeCubeInstances(gl, instances),
     createTexture: (draw, size) => createTexture(gl, draw, size),

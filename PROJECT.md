@@ -2,23 +2,22 @@
 
 Image Based RT is an open-source rendering experiment: use connected imagery and inexpensive raster passes to create effects that feel similar to ray tracing on lower-end graphics hardware.
 
-The current prototype is a self-contained browser scene called **Neon Atrium**. It is intentionally written without a framework, package manager, external assets, or build step.
+The browser demo ships two scenes — **Midnight Bar** (default) and **Neon Atrium** — with no framework, package manager, external assets, or build step.
 
 ## Current status
 
 The prototype has moved from an initial 2D view-cell experiment to a stable WebGL2 3D baseline. It currently includes:
 
 - A portable method module (`src/implementation.js`) that companies can drop into their own WebGL2 apps.
-- A Neon Atrium demo scene (`src/main.js`) that authors content and UI on top of that module.
-- Low-poly 3D geometry: floor, back wall, plinth, colored pillars, boxes, and a red/orange sphere.
-- Interactive orbit camera, zoom, WASD/arrow movement, and camera bounds.
-- A dynamic light that can be moved with `Q` / `E`.
+- A demo shell (`src/main.js`) with scene switching, orbit/WASD controls, and inspector UI.
+- **Midnight Bar** (`src/scenes/midnightBar.js`): lathed bottles, stadium bar counter, stools, pendants, draft taps, BAR neon, wet-floor puddle (~130 draws).
+- **Neon Atrium** (`src/scenes/neonAtrium.js`): lighter Buildathon atrium with letterform NEON and a feathered puddle.
+- Curved mesh helpers: cylinder, lathe, torus, capsule, stadium (plus cube / plane / sphere / puddle).
+- Interactive orbit camera, zoom, WASD/arrow movement, and camera bounds per scene.
+- A dynamic key light that can be moved with `Q` / `E`.
 - Quality-scaled soft shadows (1-tap, 4-tap diagonal, or 3x3 PCF) from a depth map.
-- Small procedural image textures for floor, architecture, props, and the orb (cached across quality switches).
-- A round, multi-ring elliptical puddle with soft organic rim variation.
-- A mirrored-scene color pass rendered into an image texture for the puddle, with temporal reuse when the view is stable.
-- Non-flat water: shallow center dome, soft undulation, deep-center tint, and feathered thin edges.
-- A letterform **NEON** sign baked into a few merged meshes (cyan / magenta / housing) plus a local colored light.
+- MSAA + mipmapped reflection images with multi-tap LOD-biased water sampling.
+- Small procedural image textures (cached across quality switches).
 - Atmosphere helpers in the lit pass: wrap lighting, fresnel rim, cheap height fog.
 - Adjustable GPU quality presets for lower-end / integrated GPUs.
 - A debug light marker and runtime telemetry panel.
@@ -40,26 +39,31 @@ Opening `index.html` directly may work in some browsers, but a static server is 
 ## Controls
 
 - Drag inside the viewport to orbit the camera.
-- `WASD` or the arrow keys move the camera target through the atrium.
+- `WASD` or the arrow keys move the camera target.
 - Hold `Shift` while moving for faster traversal.
 - Use the mouse wheel to zoom.
 - `Q` / `E` move the light horizontally so the shadow response can be inspected.
-- `R` or **Reset view** restores the authored camera and light pose.
+- `R` or **Reset view** restores the authored camera and light pose for the active scene.
+- **Active scene** switches Midnight Bar ↔ Neon Atrium.
 - **Image accents** enables or disables the procedural material textures.
-- **Neon sign** toggles the letterform tubes, colored local light, and their reflection contribution.
+- **Bar neon / Neon sign** toggles neon-tagged objects, colored local light, and their reflection contribution.
 - **Shadow debug** displays the light as a small orange marker.
-- **GPU quality** selects low, balanced, or high presets (map size, PCF, water blur, DPR cap, neon/puddle detail).
+- **GPU quality** selects low, balanced, or high presets (map size, PCF, water blur, DPR cap, mesh detail).
 
-## Split architecture: method + demo
+## Split architecture: method + demo + scenes
 
 ```text
 index.html
     │
-    └── src/main.js          Neon Atrium scene, UI, input, neon letters
+    └── src/main.js                 UI, input, scene switcher, render loop
+            │
+            ├── src/scenes/midnightBar.js   dense game-style bar (default)
+            ├── src/scenes/neonAtrium.js    original atrium demo
             │
             └── src/implementation.js
                     portable Image Based RT method
                     (shadow + mirrored reflection image + water composite)
+                    + curved mesh helpers
 ```
 
 ### `src/implementation.js` (portable method)
@@ -67,7 +71,7 @@ index.html
 This is the file companies should copy first. It replaces classic secondary-ray reflection with:
 
 1. A depth shadow pass + optional PCF.
-2. A mirrored-camera color pass into a reflection image.
+2. A mirrored-camera color pass into a reflection image (MSAA resolve + mipmaps).
 3. A water/mirror composite that samples that image with Fresnel and soft undulation.
 
 Public entry points:
@@ -78,7 +82,7 @@ Public entry points:
   - `setQuality(name)`, `allocateTargets()`
   - `buildOrbitCamera(...)`, `buildMirroredCamera(...)`, `buildOrthoLight(...)`
   - `renderFrame({ canvas, camera, light, localLight, objects, water, ... })`
-  - mesh/texture helpers: `buildCube`, `buildPlane`, `buildSphere`, `buildPuddle`, `mergeCubeInstances`, `createTexture`
+  - mesh/texture helpers: `buildCube`, `buildPlane`, `buildSphere`, `buildCylinder`, `buildLathe`, `buildTorus`, `buildCapsule`, `buildStadium`, `buildPuddle`, `mergeCubeInstances`, `createTexture`
 
 Company sketch:
 
@@ -102,15 +106,22 @@ ibrt.renderFrame({
 });
 ```
 
-### `src/main.js` (demo scene)
+### `src/main.js` (demo shell)
 
-Owns the Neon Atrium content only:
+Owns wiring only:
 
-- DOM/UI wiring and orbit controls.
-- Procedural demo textures.
-- Letterform **NEON** sign construction (detail scales with quality).
-- Scene object list and animation loop.
-- Calls into `implementation.js` for all GPU passes.
+- DOM/UI and orbit controls.
+- Scene registry + rebuild on quality / scene change.
+- Animation loop calling `renderFrame`.
+
+### `src/scenes/*` (content)
+
+Each scene exports:
+
+- `*Meta` — inspector title, blurb, neon toggle labels.
+- `build*(ibrt, preset)` — returns `{ objects, floorObject, water, camera, localLight, bounds, ... }`.
+
+`floorObject` must be the same reference as the floor entry in `objects` so the mirror pass can skip it.
 
 ## Rendering architecture
 
@@ -140,27 +151,40 @@ Reflection images are rendered with MSAA, resolved into a mipmapped texture, the
 
 Additional lower-end choices in the implementation:
 
-- `powerPreference: "low-power"` and antialias off except on high.
-- `mediump` shader precision, cheap height fog, wrap lighting.
-- Neon letter strokes baked into 2–3 merged meshes (far fewer draw calls).
+- `powerPreference: "low-power"`; canvas antialias on balanced/high.
+- `mediump` lit shaders, cheap height fog, wrap lighting.
+- Neon letter strokes baked into a few merged meshes (far fewer draw calls).
 - Temporal reuse of shadow/reflection targets when the view is stable.
-- Quality-scaled puddle segment/ring counts.
-- Smaller procedural textures (64–128px), cached across quality switches.
+- Quality-scaled puddle segment/ring counts and curved-mesh segment counts.
+- Smaller procedural textures (64–256px), cached across quality switches.
 - Pixel ratio capped per preset so retina displays do not 2–3× fill-rate cost.
 
 ### Water composite
 
 The puddle is a multi-ring elliptical disc. Vertex UV.x stores radial distance. The shaders lift a shallow center dome, sample the mirrored scene image (with quality-scaled blur), tint deeper water in the center, and feather alpha into a thin meniscus at the rim.
 
-### Neon letter sign
+### Neon signs
 
-Demo-only geometry in `main.js`: readable **NEON** tube strokes mounted on a dark housing. Stroke/endcap/oval density follows the active quality preset. A local colored light contributes to lit surfaces and the water glint; the letters themselves appear in the mirrored reflection image.
+Demo-only geometry in the scene modules: readable tube strokes mounted on a dark housing. Stroke/oval density follows the active quality preset. A local colored light contributes to lit surfaces and the water glint; the letters themselves appear in the mirrored reflection image.
+
+### Midnight Bar props
+
+Non-blocky assets are authored as:
+
+| Helper | Used for |
+| --- | --- |
+| `buildLathe` | Wine / whiskey / decanter / tumbler / coupe / shaker bottles |
+| `buildStadium` | Curved bar counter and shelf planks |
+| `buildCylinder` / taper | Legs, uprights, foot-rail segments, pendant cables |
+| `buildTorus` | Stool seat rings and foot rings |
+| `buildCapsule` | Booth backs, curtains, tap spouts |
+| `buildSphere` | Pendant globes, citrus, rail connectors |
 
 ## Source map
 
 ### `index.html`
 
-The application shell, canvas, renderer telemetry, control inputs, legend, and link to this document.
+The application shell, canvas, renderer telemetry, scene/quality controls, legend, and link to this document.
 
 ### `styles.css`
 
@@ -168,11 +192,15 @@ The dark lab interface, responsive two-column layout, viewport overlays, inspect
 
 ### `src/implementation.js`
 
-Portable Image Based RT method module intended for reuse outside this demo.
+Portable Image Based RT method module intended for reuse outside this demo, plus shared mesh/texture helpers.
 
 ### `src/main.js`
 
-Neon Atrium demo entrypoint that imports and drives `implementation.js`.
+Demo entrypoint: boots WebGL2, switches scenes, handles input, drives `renderFrame`.
+
+### `src/scenes/midnightBar.js` / `neonAtrium.js`
+
+Authored scene content (textures, meshes, object lists, camera/light defaults).
 
 ### `PROJECT.md`
 
@@ -189,36 +217,41 @@ Architecture and development record, including the company integration path, qua
 7. The puddle was rebuilt as a round multi-ring disc with dome height and feathered edges.
 8. The neon rig became a letterform **NEON** sign with quality-scaled detail.
 9. The method was extracted into `implementation.js` so the demo and the reusable RT-replacement API are separate, and quality presets were retuned for lower-end GPUs.
-10. Neon strokes were merged into batched meshes and shadow/reflection passes gained temporal refresh intervals, cutting draw calls (~12 + 2) while holding interactive frame rates.
+10. Neon strokes were merged into batched meshes and shadow/reflection passes gained temporal refresh intervals, cutting draw calls while holding interactive frame rates.
 11. Lit/water shading gained wrap lighting, fresnel rim, height fog, and clearer puddle reflections for a denser look without post-process bloom.
 12. Multi-angle puddle fix: mirrored projection uses square aspect (matching the RT) with height-based FOV; reflection UVs project from the flat mirror plane (not the dome); soft UV edge fade + stronger grazing fresnel keep side views clean.
+13. Midnight Bar scene added with lathe/cylinder/torus/capsule/stadium helpers for a denser game-style reflection stress test; scenes split into `src/scenes/` with an inspector switcher.
 
 ## Verification
 
 ```bash
 node --check src/implementation.js
 node --check src/main.js
+node --check src/scenes/midnightBar.js
+node --check src/scenes/neonAtrium.js
 ```
 
-Serve locally and open in Playwright. Checks should include:
+Serve locally and open in a WebGL2 browser. Checks should include:
 
 - No page/console errors; WebGL `getError() === 0`.
 - `window.IBRT.renderer` exists and exposes `renderFrame` / `setQuality`.
-- Quality switch rebuilds targets (low → 256px shadow).
-- Neon sign readable; puddle still composites after module split.
-- Module import of `implementation.js` from `main.js` succeeds over HTTP.
+- Default scene is Midnight Bar; switching to Neon Atrium updates inspector copy.
+- Quality switch rebuilds targets (high → 1536px reflection).
+- Side / grazing orbits still show puddle neon without severe shear.
+- Module imports succeed over HTTP.
 
 ## Lower-end GPU considerations
 
-- Native low-power WebGL2 context; antialias only on the high preset.
-- One depth shadow texture and one smaller reflection texture.
+- Native low-power WebGL2 context; canvas antialias on balanced/high.
+- One depth shadow texture and one reflection texture (MSAA resolve when available).
 - Sample counts (PCF / water blur) and DPR are quality-gated.
 - One additional local light instead of bloom/post chains.
-- Small 128px procedural textures created at startup.
+- Small procedural textures created at startup and cached.
 - No per-pixel ray traversal.
-- Neon letter strokes merged into 2–3 draw calls instead of dozens of tube instances.
-- Temporal reuse of shadow/reflection targets on low/balanced when the camera/light are stable.
+- Neon letter strokes merged into a few draw calls instead of dozens of tube instances.
+- Temporal reuse of shadow/reflection targets on low when the camera/light are stable.
 - Water mesh stays a single inexpensive disc; motion is shader math.
+- Bar mesh segment counts scale down on the low preset.
 
 ## Known limitations
 
@@ -226,8 +259,10 @@ Serve locally and open in Playwright. Checks should include:
 - The reflection is a single mirrored color image. Objects outside the mirrored camera's capture can disappear from the puddle; soft edge fade blends those regions into water tint.
 - The water surface is a procedural dome plus soft undulation; it is not a fluid simulation.
 - Neon letters are assembled from box strokes rather than true bent glass tubes.
+- Bar props are procedural lathes/cylinders, not authored glTF assets.
 - `implementation.js` expects the host app to supply meshes, materials, and a planar water object; it does not import glTF or manage assets.
 - The procedural textures in the demo are placeholders for future captured imagery.
+- Dense scenes (~130 draws) are fine for testing but may need batching/instancing for production iGPU budgets.
 
 ## Roadmap
 
@@ -239,6 +274,7 @@ Serve locally and open in Playwright. Checks should include:
 6. Add captured normal/roughness imagery for the water and materials.
 7. Benchmark memory, frame time, and visual error on integrated GPUs.
 8. Publish an open capture format and permissively licensed sample scenes.
+9. Optional glTF import path for authored game props while keeping the RT method portable.
 
 ## Design principle
 

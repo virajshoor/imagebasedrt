@@ -24,16 +24,28 @@ It is **not** physically correct ray tracing. It is a deliberate trade: reusable
 
 ---
 
-## Live demo scene — Neon Atrium
+## Live demo scenes
 
-A self-contained atrium with:
+Switch scenes in the inspector (**Active scene**):
 
-- Soft quality-scaled PCF shadows from a depth map  
-- A round, feathered puddle that reflects the scene  
-- A letterform **NEON** sign (batched emissive tubes + local colored light)  
-- Atmosphere via wrap lighting, fresnel rim, and cheap height fog  
-- Orbit camera, WASD move, movable key light  
-- No framework, no bundler, no external assets  
+### Midnight Bar (default) — SCENE / 002
+
+A denser game-style lounge for stressing the reflection path:
+
+- Lathed bottles, tumblers, coupes, and shakers (solids of revolution — not cubes)
+- Curved stadium bar counter, brass foot rail, velvet stools with torus rings
+- Pendant globes, draft taps, hanging stemware, back-bar mirror
+- Pink/cyan **BAR** neon + wet-floor puddle that mirrors shelves and signage
+- ~130 opaque draws + shadow/reflection passes; holds interactive frame rates
+
+### Neon Atrium — SCENE / 001
+
+The original lighter Buildathon demo:
+
+- Soft quality-scaled PCF shadows from a depth map
+- Letterform **NEON** sign (batched emissive tubes + local colored light)
+- Round feathered puddle reflecting the atrium
+- Low draw-call proxy geometry for a cheap baseline
 
 ```text
 scene
@@ -67,13 +79,14 @@ Open [http://localhost:8080](http://localhost:8080) in a WebGL2-capable browser.
 | Wheel | Zoom |
 | `Q` / `E` | Move key light |
 | `R` | Reset view |
+| Active scene | Midnight Bar / Neon Atrium |
 | GPU quality | Low / balanced / high budgets |
 
 ---
 
 ## For companies — drop-in method
 
-The portable implementation lives in [`src/implementation.js`](./src/implementation.js). The Neon Atrium demo in [`src/main.js`](./src/main.js) only authors the scene and UI on top of it.
+The portable implementation lives in [`src/implementation.js`](./src/implementation.js). Demo scenes and UI live in [`src/main.js`](./src/main.js) + [`src/scenes/`](./src/scenes/).
 
 ```js
 import { createImageBasedRT, recommendContextOptions } from "./implementation.js";
@@ -93,6 +106,8 @@ ibrt.renderFrame({
   aspect: width / height,
 });
 ```
+
+Mesh helpers available on the factory (and as named exports): `buildCube`, `buildPlane`, `buildSphere`, `buildCylinder`, `buildLathe`, `buildTorus`, `buildCapsule`, `buildStadium`, `buildPuddle`, `mergeCubeInstances`, `createTexture`.
 
 ### Quality presets (lower-end first)
 
@@ -115,8 +130,11 @@ imagebasedrt/
 ├── PROJECT.md                 Architecture & iteration notes
 ├── README.md                  You are here
 └── src/
-    ├── implementation.js      Portable Image Based RT method
-    └── main.js                Neon Atrium scene + UI
+    ├── implementation.js      Portable Image Based RT method + mesh helpers
+    ├── main.js                UI, input, scene switcher, render loop
+    └── scenes/
+        ├── midnightBar.js     Dense game-style bar (default)
+        └── neonAtrium.js      Original atrium demo
 ```
 
 More detail: [`PROJECT.md`](./PROJECT.md).
@@ -125,11 +143,12 @@ More detail: [`PROJECT.md`](./PROJECT.md).
 
 ## Built with
 
-- Vanilla **WebGL2** (ES modules, no build step)  
-- Image-based planar reflections that hold up from orbit / side / grazing views  
-- Depth shadows with quality-scaled PCF  
-- Batched neon meshes + temporal pass refresh for better frames  
-- Procedural textures generated at runtime  
+- Vanilla **WebGL2** (ES modules, no build step)
+- Image-based planar reflections that hold up from orbit / side / grazing views
+- Depth shadows with quality-scaled PCF
+- Curved procedural props (lathe / cylinder / torus / capsule / stadium)
+- Batched neon meshes + temporal pass refresh for better frames
+- Procedural textures generated at runtime
 
 ---
 

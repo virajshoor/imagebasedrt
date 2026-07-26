@@ -43,9 +43,16 @@
         <!-- Inspector copy intentionally explains the experiment in-product. -->
         <aside class="inspector" aria-label="Renderer inspector">
           <div class="inspector-section intro-section">
-            <p class="eyebrow">SCENE / 001</p>
-            <h2>Neon Atrium</h2>
-            <p class="muted">A low-cost 3D atrium with image-assisted surfaces, orbit controls, and a dynamic shadow-casting light.</p>
+            <p class="eyebrow" id="sceneCode">SCENE / 002</p>
+            <h2 id="sceneTitle">Midnight Bar</h2>
+            <p class="muted" id="sceneBlurb">A denser game-style lounge: lathed bottles, curved counter, stools, pendants, and a wet floor that stresses the reflection path.</p>
+            <label class="select-row" for="sceneSelect">
+              <span><b>Active scene</b><small>Swap atrium / bar test beds</small></span>
+              <select id="sceneSelect">
+                <option value="bar" selected>Midnight Bar</option>
+                <option value="atrium">Neon Atrium</option>
+              </select>
+            </label>
           </div>
 
           <!-- Values are updated by updateTelemetry() in src/main.js. -->
@@ -53,7 +60,7 @@
             <div class="section-heading"><span>RUNTIME TELEMETRY</span><span class="live-pill">LIVE</span></div>
             <div class="telemetry-grid">
               <div class="metric"><span class="metric-label">RENDERER</span><strong id="cellReadout">WEBGL2</strong></div>
-              <div class="metric"><span class="metric-label">SHADOW</span><strong id="blendReadout">1024px</strong></div>
+              <div class="metric"><span class="metric-label">REFLECT</span><strong id="blendReadout">1024px</strong></div>
               <div class="metric"><span class="metric-label">DRAWS</span><strong id="passReadout">2 + 1</strong></div>
               <div class="metric"><span class="metric-label">FRAME</span><strong id="frameReadout">60 FPS</strong></div>
             </div>
@@ -68,7 +75,7 @@
               <span class="toggle-ui" aria-hidden="true"></span>
             </label>
             <label class="toggle-row" for="neonToggle">
-              <span><b>Neon sign</b><small>Letterform NEON tubes and colored local light</small></span>
+              <span><b id="neonToggleLabel">Bar neon</b><small id="neonToggleHint">BAR letter tubes and warm local glow</small></span>
               <input id="neonToggle" type="checkbox" checked />
               <span class="toggle-ui" aria-hidden="true"></span>
             </label>
@@ -94,12 +101,12 @@
             <div class="legend-row"><span class="legend-swatch violet"></span><span>Image-based water reflection</span></div>
             <div class="legend-row"><span class="legend-swatch neon"></span><span>Neon emission + local light</span></div>
             <div class="legend-row"><span class="legend-swatch orange"></span><span>Soft PCF shadow</span></div>
-            <p class="tiny-note">The round puddle reflects a mirrored scene image of the NEON letter sign, then gently warps it with soft undulation and thin feathered edges.</p>
+            <p class="tiny-note" id="legendNote">The wet floor puddle mirrors shelves, bottles, and the BAR neon — a denser reflection stress test than the atrium.</p>
           </div>
 
           <!-- Documentation link intentionally stays available from the demo. -->
           <footer class="inspector-footer">
-            <span>IBRT / 0.5.1</span>
+            <span>IBRT / 0.6.1</span>
             <a href="./PROJECT.md">Read project notes ↗</a>
           </footer>
         </aside>

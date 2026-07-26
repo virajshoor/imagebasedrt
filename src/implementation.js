@@ -35,40 +35,46 @@ export const QUALITY_PRESETS = {
   low: {
     shadowSize: 256,
     reflectionSize: 256,
-    pcfRadius: 0,       // 1-tap shadow
+    pcfMode: 0,         // 1-tap shadow
     waterBlur: 0,       // 1-tap reflection sample
     maxPixelRatio: 1,
-    shadowStrength: 0.68,
-    puddleSegments: 48,
+    shadowStrength: 0.7,
+    puddleSegments: 40,
     puddleRings: 3,
     neonDetail: "low",
     antialias: false,
+    shadowInterval: 2,      // refresh shadow every N frames when still
+    reflectionInterval: 2,  // refresh reflection every N frames
   },
   // Default demo path: readable neon letters, still modest VRAM.
   balanced: {
     shadowSize: 512,
     reflectionSize: 384,
-    pcfRadius: 1,       // 3x3 PCF
+    pcfMode: 1,         // 4-tap diagonal PCF (cheaper than 3x3)
     waterBlur: 1,       // 5-tap cross blur
-    maxPixelRatio: 1.25,
-    shadowStrength: 0.85,
-    puddleSegments: 64,
+    maxPixelRatio: 1,
+    shadowStrength: 0.86,
+    puddleSegments: 56,
     puddleRings: 4,
     neonDetail: "balanced",
     antialias: false,
+    shadowInterval: 1,
+    reflectionInterval: 2,
   },
   // Higher fidelity when a discrete GPU is available.
   high: {
     shadowSize: 1024,
     reflectionSize: 768,
-    pcfRadius: 1,
+    pcfMode: 2,         // 3x3 PCF
     waterBlur: 2,       // 9-tap blur
     maxPixelRatio: 1.5,
     shadowStrength: 0.92,
-    puddleSegments: 96,
-    puddleRings: 6,
+    puddleSegments: 80,
+    puddleRings: 5,
     neonDetail: "high",
     antialias: true,
+    shadowInterval: 1,
+    reflectionInterval: 1,
   },
 };
 
@@ -230,8 +236,13 @@ uniform float uTextureEnabled;
 uniform float uReceiveShadow;
 uniform float uGloss;
 uniform float uShadowTexel;
-uniform float uPcfRadius;
+uniform float uPcfMode;
 out vec4 outColor;
+
+float sampleShadow(vec3 shadowCoord, float bias, vec2 offset) {
+  float depth = texture(uShadowMap, shadowCoord.xy + offset * uShadowTexel).r;
+  return shadowCoord.z - bias > depth ? 1.0 : 0.0;
+}
 
 float shadowAmount(vec3 normal, vec3 toLight) {
   vec3 shadowCoord = vShadowPosition.xyz / vShadowPosition.w;
@@ -239,20 +250,26 @@ float shadowAmount(vec3 normal, vec3 toLight) {
   if (shadowCoord.z > 1.0 || shadowCoord.x < 0.0 || shadowCoord.x > 1.0 || shadowCoord.y < 0.0 || shadowCoord.y > 1.0) {
     return 0.0;
   }
-  float bias = max(0.0018 * (1.0 - dot(normal, toLight)), 0.00035);
+  float bias = max(0.0018 * (1.0 - dot(normal, toLight)), 0.0004);
+  int mode = int(uPcfMode + 0.5);
+  if (mode <= 0) {
+    return sampleShadow(shadowCoord, bias, vec2(0.0));
+  }
+  if (mode == 1) {
+    // 4-tap diagonal — soft enough, half the cost of 3x3.
+    float occluded = sampleShadow(shadowCoord, bias, vec2(-0.7, -0.7));
+    occluded += sampleShadow(shadowCoord, bias, vec2(0.7, -0.7));
+    occluded += sampleShadow(shadowCoord, bias, vec2(-0.7, 0.7));
+    occluded += sampleShadow(shadowCoord, bias, vec2(0.7, 0.7));
+    return occluded * 0.25;
+  }
   float occluded = 0.0;
-  float samples = 0.0;
-  // uPcfRadius 0 => 1 tap, 1 => 3x3. Keeps low quality cheap on iGPUs.
-  int radius = int(uPcfRadius + 0.5);
   for (int x = -1; x <= 1; x += 1) {
     for (int y = -1; y <= 1; y += 1) {
-      if (radius == 0 && (x != 0 || y != 0)) continue;
-      float depth = texture(uShadowMap, shadowCoord.xy + vec2(float(x), float(y)) * uShadowTexel).r;
-      occluded += shadowCoord.z - bias > depth ? 1.0 : 0.0;
-      samples += 1.0;
+      occluded += sampleShadow(shadowCoord, bias, vec2(float(x), float(y)));
     }
   }
-  return occluded / max(samples, 1.0);
+  return occluded / 9.0;
 }
 
 void main() {
@@ -262,24 +279,29 @@ void main() {
   vec3 toLight = normalize(uLightPosition - vWorldPosition);
   vec3 toCamera = normalize(uCameraPosition - vWorldPosition);
   float distanceToLight = length(uLightPosition - vWorldPosition);
-  float attenuation = 1.0 / (1.0 + distanceToLight * 0.035);
-  float diffuse = max(dot(normal, toLight), 0.0);
+  float attenuation = 1.0 / (1.0 + distanceToLight * 0.032);
+  float wrap = max(dot(normal, toLight) * 0.85 + 0.15, 0.0);
   float shadow = shadowAmount(normal, toLight) * uReceiveShadow * uShadowStrength;
   vec3 halfVector = normalize(toLight + toCamera);
-  float specular = pow(max(dot(normal, halfVector), 0.0), uGloss) * 0.22;
+  float specular = pow(max(dot(normal, halfVector), 0.0), uGloss) * 0.28;
+  float fresnel = pow(1.0 - max(dot(normal, toCamera), 0.0), 3.0);
   vec3 toNeon = normalize(uNeonPosition - vWorldPosition);
   float distanceToNeon = length(uNeonPosition - vWorldPosition);
-  float neonAttenuation = uNeonIntensity / (1.0 + distanceToNeon * distanceToNeon * 0.18);
+  float neonAttenuation = uNeonIntensity / (1.0 + distanceToNeon * distanceToNeon * 0.16);
   float neonDiffuse = max(dot(normal, toNeon), 0.0);
-  float neonSpecular = pow(max(dot(normal, normalize(toNeon + toCamera)), 0.0), 54.0) * 0.30;
-  vec3 ambient = vec3(0.12, 0.16, 0.20);
-  vec3 lit = albedo * (ambient + uLightColor * diffuse * attenuation * (1.0 - shadow));
+  float neonSpecular = pow(max(dot(normal, normalize(toNeon + toCamera)), 0.0), 48.0) * 0.34;
+  vec3 ambient = vec3(0.08, 0.12, 0.16);
+  vec3 lit = albedo * (ambient + uLightColor * wrap * attenuation * (1.0 - shadow));
   lit += albedo * uNeonColor * neonDiffuse * neonAttenuation;
-  lit += uLightColor * specular * (1.0 - shadow * 0.5);
+  lit += uLightColor * specular * (1.0 - shadow * 0.45);
   lit += uNeonColor * neonSpecular * neonAttenuation;
   lit += uEmissive;
-  lit = lit / (lit + vec3(1.0));
-  lit = pow(lit, vec3(0.88));
+  lit += albedo * vec3(0.04, 0.08, 0.1) * fresnel;
+  // Cheap height fog for depth and atmosphere.
+  float fog = smoothstep(4.0, 16.0, length(uCameraPosition - vWorldPosition));
+  lit = mix(lit, vec3(0.02, 0.045, 0.07), fog * 0.55);
+  lit = lit / (lit + vec3(0.85));
+  lit = pow(lit, vec3(0.92));
   outColor = vec4(lit, uBaseColor.a);
 }`;
 }
@@ -393,32 +415,32 @@ vec3 sampleReflection(vec2 uv, float texel, float mode) {
 void main() {
   vec3 viewDirection = normalize(uCameraPosition - vWorldPosition);
   float interior = 1.0 - vRadial;
-  vec2 wave = softWave(vWorldPosition.xz, uTime) * (0.35 + interior * 0.65);
-  vec3 surfaceNormal = normalize(vNormal + vec3(wave.x * 0.035, 0.0, wave.y * 0.035));
+  vec2 wave = softWave(vWorldPosition.xz, uTime) * (0.28 + interior * 0.55);
+  vec3 surfaceNormal = normalize(vNormal + vec3(wave.x * 0.03, 0.0, wave.y * 0.03));
   vec2 reflectionUV = vReflectionClipPosition.xy / vReflectionClipPosition.w * 0.5 + 0.5;
-  reflectionUV += wave * 0.0022 * interior;
+  reflectionUV += wave * 0.0018 * interior;
   reflectionUV = clamp(reflectionUV, vec2(0.003), vec2(0.997));
   vec3 reflection = sampleReflection(reflectionUV, uTexelSize, uWaterBlur);
   float facing = clamp(dot(surfaceNormal, viewDirection), 0.0, 1.0);
-  float fresnel = pow(1.0 - facing, 2.8);
+  float fresnel = pow(1.0 - facing, 2.4);
   vec3 lightDirection = normalize(uLightPosition - vWorldPosition);
-  float glint = pow(max(dot(reflect(-lightDirection, surfaceNormal), viewDirection), 0.0), 70.0);
+  float glint = pow(max(dot(reflect(-lightDirection, surfaceNormal), viewDirection), 0.0), 80.0);
   vec3 neonDirection = normalize(uNeonPosition - vWorldPosition);
   float neonDistance = length(uNeonPosition - vWorldPosition);
-  float neonGlint = pow(max(dot(reflect(-neonDirection, surfaceNormal), viewDirection), 0.0), 96.0);
-  float neonFalloff = uNeonIntensity / (1.0 + neonDistance * neonDistance * 0.18);
-  vec3 deepTint = uWaterColor * 1.2;
-  vec3 rimTint = mix(uWaterColor, vec3(0.05, 0.09, 0.08), 0.55);
+  float neonGlint = pow(max(dot(reflect(-neonDirection, surfaceNormal), viewDirection), 0.0), 90.0);
+  float neonFalloff = uNeonIntensity / (1.0 + neonDistance * neonDistance * 0.16);
+  vec3 deepTint = uWaterColor * 1.35;
+  vec3 rimTint = mix(uWaterColor, vec3(0.06, 0.1, 0.09), 0.45);
   vec3 tint = mix(rimTint, deepTint, interior * interior);
-  float reflectAmount = 0.58 + fresnel * 0.34 + interior * 0.08;
+  float reflectAmount = 0.62 + fresnel * 0.32 + interior * 0.06;
   vec3 surface = mix(tint, reflection, reflectAmount);
-  surface += vec3(0.42, 0.58, 0.54) * glint * (0.10 + interior * 0.12);
-  surface += uNeonColor * neonGlint * neonFalloff * (0.22 + interior * 0.16);
-  surface = surface / (surface + vec3(1.0));
-  surface = pow(surface, vec3(0.88));
-  float body = smoothstep(1.0, 0.38, vRadial);
-  float meniscus = smoothstep(1.0, 0.7, vRadial);
-  float alpha = uOpacity * mix(0.08, 1.0, pow(body, 0.75)) * mix(0.2, 1.0, meniscus);
+  surface += vec3(0.5, 0.68, 0.62) * glint * (0.12 + interior * 0.14);
+  surface += uNeonColor * neonGlint * neonFalloff * (0.28 + interior * 0.18);
+  surface = surface / (surface + vec3(0.9));
+  surface = pow(surface, vec3(0.9));
+  float body = smoothstep(1.0, 0.36, vRadial);
+  float meniscus = smoothstep(1.0, 0.68, vRadial);
+  float alpha = uOpacity * mix(0.06, 1.0, pow(body, 0.72)) * mix(0.18, 1.0, meniscus);
   if (alpha < 0.012) discard;
   outColor = vec4(surface, alpha);
 }`;
@@ -579,6 +601,49 @@ export function createTexture(gl, draw, size = 128) {
   return texture;
 }
 
+// Bake many transformed unit-cubes into one mesh so letter strokes share a draw.
+export function mergeCubeInstances(gl, instances) {
+  const unit = [
+    // position + normal + uv per face corner (same layout as buildCube)
+    [[-1, -1, 1], [0, 0, 1], [0, 0]], [[1, -1, 1], [0, 0, 1], [1, 0]], [[1, 1, 1], [0, 0, 1], [1, 1]], [[-1, 1, 1], [0, 0, 1], [0, 1]],
+    [[1, -1, -1], [0, 0, -1], [0, 0]], [[-1, -1, -1], [0, 0, -1], [1, 0]], [[-1, 1, -1], [0, 0, -1], [1, 1]], [[1, 1, -1], [0, 0, -1], [0, 1]],
+    [[1, -1, 1], [1, 0, 0], [0, 0]], [[1, -1, -1], [1, 0, 0], [1, 0]], [[1, 1, -1], [1, 0, 0], [1, 1]], [[1, 1, 1], [1, 0, 0], [0, 1]],
+    [[-1, -1, -1], [-1, 0, 0], [0, 0]], [[-1, -1, 1], [-1, 0, 0], [1, 0]], [[-1, 1, 1], [-1, 0, 0], [1, 1]], [[-1, 1, -1], [-1, 0, 0], [0, 1]],
+    [[-1, 1, 1], [0, 1, 0], [0, 0]], [[1, 1, 1], [0, 1, 0], [1, 0]], [[1, 1, -1], [0, 1, 0], [1, 1]], [[-1, 1, -1], [0, 1, 0], [0, 1]],
+    [[-1, -1, -1], [0, -1, 0], [0, 0]], [[1, -1, -1], [0, -1, 0], [1, 0]], [[1, -1, 1], [0, -1, 0], [1, 1]], [[-1, -1, 1], [0, -1, 0], [0, 1]],
+  ];
+  const faceIndex = [0, 1, 2, 0, 2, 3];
+  const vertices = [];
+  const indices = [];
+  let base = 0;
+  instances.forEach((instance) => {
+    const matrix = makeModel(instance.position, instance.scale, instance.rotation || 0, instance.rotationZ || 0);
+    const normalMatrix = [
+      [matrix[0], matrix[1], matrix[2]],
+      [matrix[4], matrix[5], matrix[6]],
+      [matrix[8], matrix[9], matrix[10]],
+    ];
+    for (let face = 0; face < 6; face += 1) {
+      for (let corner = 0; corner < 4; corner += 1) {
+        const [px, py, pz] = unit[face * 4 + corner][0];
+        const [nx, ny, nz] = unit[face * 4 + corner][1];
+        const [u, v] = unit[face * 4 + corner][2];
+        const wx = matrix[0] * px + matrix[4] * py + matrix[8] * pz + matrix[12];
+        const wy = matrix[1] * px + matrix[5] * py + matrix[9] * pz + matrix[13];
+        const wz = matrix[2] * px + matrix[6] * py + matrix[10] * pz + matrix[14];
+        const nnx = normalMatrix[0][0] * nx + normalMatrix[1][0] * ny + normalMatrix[2][0] * nz;
+        const nny = normalMatrix[0][1] * nx + normalMatrix[1][1] * ny + normalMatrix[2][1] * nz;
+        const nnz = normalMatrix[0][2] * nx + normalMatrix[1][2] * ny + normalMatrix[2][2] * nz;
+        const inv = 1 / (Math.hypot(nnx, nny, nnz) || 1);
+        vertices.push(wx, wy, wz, nnx * inv, nny * inv, nnz * inv, u, v);
+      }
+      faceIndex.forEach((offset) => indices.push(base + offset));
+      base += 4;
+    }
+  });
+  return makeMesh(gl, vertices, indices);
+}
+
 export function recommendContextOptions(qualityName = "balanced") {
   const preset = QUALITY_PRESETS[qualityName] || QUALITY_PRESETS.balanced;
   return {
@@ -624,7 +689,7 @@ export function createImageBasedRT(gl, options = {}) {
     receiveShadow: gl.getUniformLocation(renderProgram, "uReceiveShadow"),
     gloss: gl.getUniformLocation(renderProgram, "uGloss"),
     shadowTexel: gl.getUniformLocation(renderProgram, "uShadowTexel"),
-    pcfRadius: gl.getUniformLocation(renderProgram, "uPcfRadius"),
+    pcfMode: gl.getUniformLocation(renderProgram, "uPcfMode"),
   };
 
   const depthUniforms = {
@@ -825,7 +890,7 @@ export function createImageBasedRT(gl, options = {}) {
     gl.uniform1f(renderUniforms.shadowStrength, preset.shadowStrength);
     gl.uniform1f(renderUniforms.textureEnabled, textureEnabled ? 1 : 0);
     gl.uniform1f(renderUniforms.shadowTexel, 1 / shadowTarget.size);
-    gl.uniform1f(renderUniforms.pcfRadius, preset.pcfRadius);
+    gl.uniform1f(renderUniforms.pcfMode, preset.pcfMode);
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, shadowTarget.texture);
     gl.uniform1i(renderUniforms.shadowMap, 1);
@@ -878,9 +943,15 @@ export function createImageBasedRT(gl, options = {}) {
     gl.disable(gl.BLEND);
   }
 
+  let frameIndex = 0;
+  let lastShadowKey = "";
+  let lastReflectionKey = "";
+  let lastReflectionCamera = null;
+
   /**
    * Full frame: shadow depth -> mirrored reflection image -> main color -> water.
-   * This is the image-based substitute for tracing reflection rays.
+   * Shadow/reflection passes can refresh on an interval when the view is stable,
+   * which keeps frame time lower on integrated GPUs.
    */
   function renderFrame(frame) {
     const {
@@ -895,27 +966,51 @@ export function createImageBasedRT(gl, options = {}) {
       debugMarker = null,
       time = 0,
       aspect,
+      clearColor = [0.018, 0.04, 0.06, 1],
     } = frame;
 
+    frameIndex += 1;
     const reflectionCamera = buildMirroredCamera(camera, camera.target || [0, 0, 0], aspect, water?.planeY ?? 0);
-    const enabledObjects = objects.map((object) => ({
-      ...object,
-      enabled: object.enabled !== false,
-    }));
+    const enabledObjects = objects;
 
-    renderDepth(light, enabledObjects, (object) => object.enabled);
-    renderOpaque({
-      canvas,
-      camera: reflectionCamera,
-      light,
-      localLight,
-      objects: enabledObjects,
-      floorObject,
-      framebuffer: reflectionTarget.framebuffer,
-      includeFloor: false,
-      textureEnabled,
-      debugMarker: null,
-    });
+    const shadowKey = `${light.lightPosition[0].toFixed(2)},${light.lightPosition[2].toFixed(2)}`;
+    const reflectionKey = [
+      camera.cameraPosition[0].toFixed(2),
+      camera.cameraPosition[1].toFixed(2),
+      camera.cameraPosition[2].toFixed(2),
+      (camera.target || [0, 0, 0]).map((v) => v.toFixed(2)).join(","),
+      localLight.intensity.toFixed(1),
+      textureEnabled ? 1 : 0,
+    ].join("|");
+
+    const shadowDirty = shadowKey !== lastShadowKey;
+    const reflectionDirty = reflectionKey !== lastReflectionKey;
+    const runShadow = shadowDirty || frameIndex % (preset.shadowInterval || 1) === 0;
+    const runReflection = reflectionDirty || frameIndex % (preset.reflectionInterval || 1) === 0;
+
+    if (runShadow) {
+      renderDepth(light, enabledObjects, (object) => object.enabled !== false);
+      lastShadowKey = shadowKey;
+    }
+
+    if (runReflection) {
+      renderOpaque({
+        canvas,
+        camera: reflectionCamera,
+        light,
+        localLight,
+        objects: enabledObjects,
+        floorObject,
+        framebuffer: reflectionTarget.framebuffer,
+        includeFloor: false,
+        textureEnabled,
+        debugMarker: null,
+        clearColor,
+      });
+      lastReflectionKey = reflectionKey;
+      lastReflectionCamera = reflectionCamera;
+    }
+
     renderOpaque({
       canvas,
       camera,
@@ -927,11 +1022,12 @@ export function createImageBasedRT(gl, options = {}) {
       includeFloor: true,
       textureEnabled,
       debugMarker,
+      clearColor,
     });
     drawWater({
       canvas,
       camera,
-      reflectionCamera,
+      reflectionCamera: lastReflectionCamera || reflectionCamera,
       light,
       localLight,
       water,
@@ -942,6 +1038,8 @@ export function createImageBasedRT(gl, options = {}) {
       shadowSize: shadowTarget.size,
       reflectionSize: reflectionTarget.size,
       quality: qualityName,
+      skippedShadow: !runShadow,
+      skippedReflection: !runReflection,
     };
   }
 
@@ -964,6 +1062,7 @@ export function createImageBasedRT(gl, options = {}) {
     buildPlane: () => buildPlane(gl),
     buildSphere: (rings, segments) => buildSphere(gl, rings, segments),
     buildPuddle: (segments, rings) => buildPuddle(gl, segments ?? preset.puddleSegments, rings ?? preset.puddleRings),
+    mergeCubeInstances: (instances) => mergeCubeInstances(gl, instances),
     createTexture: (draw, size) => createTexture(gl, draw, size),
     makeModel,
     clamp,

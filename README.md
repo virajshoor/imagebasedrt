@@ -28,9 +28,10 @@ It is **not** physically correct ray tracing. It is a deliberate trade: reusable
 
 A self-contained atrium with:
 
-- Soft PCF shadows from a depth map  
+- Soft quality-scaled PCF shadows from a depth map  
 - A round, feathered puddle that reflects the scene  
-- A letterform **NEON** sign (emissive tubes + local colored light)  
+- A letterform **NEON** sign (batched emissive tubes + local colored light)  
+- Atmosphere via wrap lighting, fresnel rim, and cheap height fog  
 - Orbit camera, WASD move, movable key light  
 - No framework, no bundler, no external assets  
 
@@ -98,8 +99,10 @@ ibrt.renderFrame({
 | Preset | Shadow | Reflection | PCF | Water blur | Max DPR |
 | --- | ---: | ---: | --- | --- | ---: |
 | Low | 256px | 256px | 1-tap | 1-tap | 1.0 |
-| Balanced | 512px | 384px | 3×3 | 5-tap | 1.25 |
+| Balanced | 512px | 384px | 4-tap | 5-tap | 1.0 |
 | High | 1024px | 768px | 3×3 | 9-tap | 1.5 |
+
+Neon strokes are merged into a few batched meshes, and shadow/reflection passes can refresh on an interval when the view is stable — better frames on integrated GPUs without dropping the look.
 
 ---
 
@@ -125,6 +128,7 @@ More detail: [`PROJECT.md`](./PROJECT.md).
 - Vanilla **WebGL2** (ES modules, no build step)  
 - Image-based planar reflections  
 - Depth shadows with quality-scaled PCF  
+- Batched neon meshes + temporal pass refresh for better frames  
 - Procedural textures generated at runtime  
 
 ---

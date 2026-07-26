@@ -13,12 +13,13 @@ The prototype has moved from an initial 2D view-cell experiment to a stable WebG
 - Low-poly 3D geometry: floor, back wall, plinth, colored pillars, boxes, and a red/orange sphere.
 - Interactive orbit camera, zoom, WASD/arrow movement, and camera bounds.
 - A dynamic light that can be moved with `Q` / `E`.
-- Quality-scaled soft shadows (1-tap or 3x3 PCF) from a depth map.
-- Small procedural image textures for floor, architecture, props, and the orb.
+- Quality-scaled soft shadows (1-tap, 4-tap diagonal, or 3x3 PCF) from a depth map.
+- Small procedural image textures for floor, architecture, props, and the orb (cached across quality switches).
 - A round, multi-ring elliptical puddle with soft organic rim variation.
-- A mirrored-scene color pass rendered into an image texture for the puddle.
+- A mirrored-scene color pass rendered into an image texture for the puddle, with temporal reuse when the view is stable.
 - Non-flat water: shallow center dome, soft undulation, deep-center tint, and feathered thin edges.
-- A letterform **NEON** sign built from cyan/magenta tube strokes, dark housing, and a local colored light.
+- A letterform **NEON** sign baked into a few merged meshes (cyan / magenta / housing) plus a local colored light.
+- Atmosphere helpers in the lit pass: wrap lighting, fresnel rim, cheap height fog.
 - Adjustable GPU quality presets for lower-end / integrated GPUs.
 - A debug light marker and runtime telemetry panel.
 
@@ -77,7 +78,7 @@ Public entry points:
   - `setQuality(name)`, `allocateTargets()`
   - `buildOrbitCamera(...)`, `buildMirroredCamera(...)`, `buildOrthoLight(...)`
   - `renderFrame({ canvas, camera, light, localLight, objects, water, ... })`
-  - mesh/texture helpers: `buildCube`, `buildPlane`, `buildSphere`, `buildPuddle`, `createTexture`
+  - mesh/texture helpers: `buildCube`, `buildPlane`, `buildSphere`, `buildPuddle`, `mergeCubeInstances`, `createTexture`
 
 Company sketch:
 
@@ -129,18 +130,20 @@ scene meshes
 
 ### Quality presets (lower-end first)
 
-| Quality | Shadow | Reflection | PCF | Water blur | Max DPR | Notes |
+| Quality | Shadow | Reflection | PCF | Water blur | Max DPR | Refresh |
 | --- | ---: | ---: | --- | --- | ---: | --- |
-| Low | 256px | 256px | 1-tap | 1-tap | 1.0 | Fast iGPU path, simpler neon/puddle |
-| Balanced | 512px | 384px | 3x3 | 5-tap | 1.25 | Default demo preset |
-| High | 1024px | 768px | 3x3 | 9-tap | 1.5 | More neon endcaps / denser puddle |
+| Low | 256px | 256px | 1-tap | 1-tap | 1.0 | Shadow/reflection every 2 frames when still |
+| Balanced | 512px | 384px | 4-tap diagonal | 5-tap | 1.0 | Reflection every 2 frames |
+| High | 1024px | 768px | 3x3 | 9-tap | 1.5 | Every frame |
 
 Additional lower-end choices in the implementation:
 
 - `powerPreference: "low-power"` and antialias off except on high.
-- `mediump` shader precision.
+- `mediump` shader precision, cheap height fog, wrap lighting.
+- Neon letter strokes baked into 2–3 merged meshes (far fewer draw calls).
+- Temporal reuse of shadow/reflection targets when the view is stable.
 - Quality-scaled puddle segment/ring counts.
-- Smaller procedural textures (128px).
+- Smaller procedural textures (64–128px), cached across quality switches.
 - Pixel ratio capped per preset so retina displays do not 2–3× fill-rate cost.
 
 ### Water composite
@@ -184,6 +187,8 @@ Architecture and development record, including the company integration path, qua
 7. The puddle was rebuilt as a round multi-ring disc with dome height and feathered edges.
 8. The neon rig became a letterform **NEON** sign with quality-scaled detail.
 9. The method was extracted into `implementation.js` so the demo and the reusable RT-replacement API are separate, and quality presets were retuned for lower-end GPUs.
+10. Neon strokes were merged into batched meshes and shadow/reflection passes gained temporal refresh intervals, cutting draw calls (~12 + 2) while holding interactive frame rates.
+11. Lit/water shading gained wrap lighting, fresnel rim, height fog, and clearer puddle reflections for a denser look without post-process bloom.
 
 ## Verification
 
@@ -208,7 +213,8 @@ Serve locally and open in Playwright. Checks should include:
 - One additional local light instead of bloom/post chains.
 - Small 128px procedural textures created at startup.
 - No per-pixel ray traversal.
-- Neon endcaps omitted on low/balanced to cut draw calls.
+- Neon letter strokes merged into 2–3 draw calls instead of dozens of tube instances.
+- Temporal reuse of shadow/reflection targets on low/balanced when the camera/light are stable.
 - Water mesh stays a single inexpensive disc; motion is shader math.
 
 ## Known limitations

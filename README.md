@@ -68,6 +68,23 @@ python3 -m http.server 8080
 
 Open [http://localhost:8080](http://localhost:8080) in a WebGL2-capable browser.
 
+### Where reflection images live (and the bake-once command)
+
+The water combine pass samples a **reflection image** (plus a shadow depth map). In live mode those targets exist only as **WebGL textures in GPU VRAM** for the current page session — they are **regenerated most frames** (low quality may skip when the view is stable). Nothing is written to disk unless you bake.
+
+Generate the combine images **once** and reuse them forever:
+
+```bash
+node scripts/bake-images.mjs
+```
+
+That writes PNGs + `manifest.json` under [`assets/baked/`](./assets/baked/). The demo turns on **Use baked images** automatically when a matching bake exists, skips the live mirror pass, and keeps sampling the on-disk image. Press **B** or click **Bake images** in the inspector to capture/download from the browser as well.
+
+| Mode | Storage | Regenerates? |
+| --- | --- | --- |
+| Live (default before first bake) | GPU VRAM framebuffers only | Yes — each frame / dirty interval |
+| Baked (`assets/baked/**`) | PNG files on disk → uploaded once | No — combine reuses the bake forever |
+
 ---
 
 ## What to look for
@@ -94,8 +111,10 @@ The portable method lives in one file: [`src/implementation.js`](./src/implement
 | Wheel | Zoom |
 | `Q` / `E` | Move key light |
 | `R` | Reset view |
+| `B` | Bake reflection images (download) |
 | Active scene | Midnight Bar / Neon Atrium |
 | GPU quality | Low / balanced / high budgets |
+| Use baked images | Sample `assets/baked` instead of regenerating |
 
 ---
 
@@ -156,6 +175,10 @@ imagebasedrt/
 ├── styles.css                 Lab UI
 ├── PROJECT.md                 Architecture & iteration notes
 ├── README.md                  You are here
+├── scripts/
+│   └── bake-images.mjs        Generate assets/baked reflection PNGs once
+├── assets/
+│   └── baked/                 Persistent reflection images + manifest
 ├── examples/
 │   └── minimal/               Drop-in host (implementation.js only)
 └── src/
@@ -178,6 +201,7 @@ More detail: [`PROJECT.md`](./PROJECT.md).
 - Curved procedural props (lathe / cylinder / torus / capsule / stadium)
 - Batched neon meshes + temporal pass refresh for better frames
 - Procedural textures generated at runtime
+- Optional persistent bake of reflection images (`assets/baked/`) so the combine pass does not regenerate them
 
 ---
 

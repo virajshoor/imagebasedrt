@@ -8,3 +8,4 @@ node_modules/
 verify-shots/
 *.png
 !docs/**/*.png
+!assets/baked/**/*.png

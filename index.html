@@ -38,6 +38,7 @@
             <span class="key">WHEEL</span> zoom
             <span class="key">Q/E</span> light
             <span class="key">R</span> reset
+            <span class="key">B</span> bake
           </div>
         </div>
 
@@ -95,6 +96,15 @@
                 <option value="high">High · 1536² AA</option>
               </select>
             </label>
+            <label class="toggle-row" for="bakedToggle">
+              <span><b>Use baked images</b><small>Load assets/baked reflection — no per-frame regen</small></span>
+              <input id="bakedToggle" type="checkbox" />
+              <span class="toggle-ui" aria-hidden="true"></span>
+            </label>
+            <div class="bake-row">
+              <button class="ghost-button" id="bakeButton" type="button">Bake images</button>
+              <p class="tiny-note" id="bakeStatus">Reflection maps live in GPU VRAM and regenerate live until baked.</p>
+            </div>
           </div>
 
           <!-- Legend clarifies which effects are geometry, imagery, or shadows. -->
@@ -109,7 +119,7 @@
 
           <!-- Documentation link intentionally stays available from the demo. -->
           <footer class="inspector-footer">
-            <span>IBRT / 0.7.0</span>
+            <span id="ibrtVersion">IBRT / 0.8.0</span>
             <a href="./PROJECT.md">Read project notes ↗</a>
           </footer>
         </aside>

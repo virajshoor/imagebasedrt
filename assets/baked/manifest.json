@@ -1,0 +1,151 @@
+{
+  "version": "0.8.0",
+  "generatedAt": "2026-07-26T13:06:51.511Z",
+  "note": "Static planar reflection captures for the water combine pass. Generate with: node scripts/bake-images.mjs",
+  "entries": [
+    {
+      "sceneId": "bar",
+      "quality": "low",
+      "reflection": "bar/reflection-low.png",
+      "size": 640,
+      "planeY": 0,
+      "camera": {
+        "yaw": 0.18,
+        "pitch": 0.22,
+        "distance": 8.6,
+        "target": [
+          0,
+          1.15,
+          0.85
+        ],
+        "lightX": 2.6,
+        "lightZ": 2
+      },
+      "reflectionCameraPosition": [
+        1.5025447349246701,
+        -3.026774758495476,
+        5.5
+      ]
+    },
+    {
+      "sceneId": "bar",
+      "quality": "balanced",
+      "reflection": "bar/reflection-balanced.png",
+      "size": 1024,
+      "planeY": 0,
+      "camera": {
+        "yaw": 0.18,
+        "pitch": 0.22,
+        "distance": 8.6,
+        "target": [
+          0,
+          1.15,
+          0.85
+        ],
+        "lightX": 2.6,
+        "lightZ": 2
+      },
+      "reflectionCameraPosition": [
+        1.5025447349246701,
+        -3.026774758495476,
+        5.5
+      ]
+    },
+    {
+      "sceneId": "bar",
+      "quality": "high",
+      "reflection": "bar/reflection-high.png",
+      "size": 1536,
+      "planeY": 0,
+      "camera": {
+        "yaw": 0.18,
+        "pitch": 0.22,
+        "distance": 8.6,
+        "target": [
+          0,
+          1.15,
+          0.85
+        ],
+        "lightX": 2.6,
+        "lightZ": 2
+      },
+      "reflectionCameraPosition": [
+        1.5025447349246701,
+        -3.026774758495476,
+        5.5
+      ]
+    },
+    {
+      "sceneId": "atrium",
+      "quality": "low",
+      "reflection": "atrium/reflection-low.png",
+      "size": 640,
+      "planeY": 0,
+      "camera": {
+        "yaw": 0.12,
+        "pitch": 0.34,
+        "distance": 8.8,
+        "target": [
+          0,
+          1.45,
+          -0.55
+        ],
+        "lightX": 3.4,
+        "lightZ": 2.4
+      },
+      "reflectionCameraPosition": [
+        0.9931613290924621,
+        -4.3846864108391665,
+        5.8
+      ]
+    },
+    {
+      "sceneId": "atrium",
+      "quality": "balanced",
+      "reflection": "atrium/reflection-balanced.png",
+      "size": 1024,
+      "planeY": 0,
+      "camera": {
+        "yaw": 0.12,
+        "pitch": 0.34,
+        "distance": 8.8,
+        "target": [
+          0,
+          1.45,
+          -0.55
+        ],
+        "lightX": 3.4,
+        "lightZ": 2.4
+      },
+      "reflectionCameraPosition": [
+        0.9931613290924621,
+        -4.3846864108391665,
+        5.8
+      ]
+    },
+    {
+      "sceneId": "atrium",
+      "quality": "high",
+      "reflection": "atrium/reflection-high.png",
+      "size": 1536,
+      "planeY": 0,
+      "camera": {
+        "yaw": 0.12,
+        "pitch": 0.34,
+        "distance": 8.8,
+        "target": [
+          0,
+          1.45,
+          -0.55
+        ],
+        "lightX": 3.4,
+        "lightZ": 2.4
+      },
+      "reflectionCameraPosition": [
+        0.9931613290924621,
+        -4.3846864108391665,
+        5.8
+      ]
+    }
+  ]
+}

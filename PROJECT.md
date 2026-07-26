@@ -24,6 +24,7 @@ The prototype has moved from an initial 2D view-cell experiment to a stable WebG
 - Atmosphere helpers in the lit pass: wrap lighting, fresnel rim, cheap height fog, floor-contact AO.
 - Adjustable GPU quality presets for lower-end / integrated GPUs.
 - A debug light marker and runtime telemetry panel.
+- Persistent reflection bake (`scripts/bake-images.mjs` → `assets/baked/`) so the water combine image can be generated once and reused forever.
 
 This is not literal ray tracing. It is rasterized WebGL2 with image-assisted materials and an image-based reflection pass. The reflected scene is reused as a texture instead of being reached by tracing secondary rays.
 
@@ -38,6 +39,27 @@ python3 -m http.server 8080
 Then open `http://localhost:8080` in a WebGL2-capable browser.
 
 Opening `index.html` directly may work in some browsers, but a static server is recommended because module loading and browser security behavior are more predictable over HTTP.
+
+### Reflection image storage (live vs baked)
+
+The water composite **combines** the main color buffer with a mirrored **reflection image** (and lit surfaces sample a shadow depth map).
+
+| Target | Live storage | Regenerated? |
+| --- | --- | --- |
+| Shadow map | WebGL depth texture / FBO in GPU VRAM | Yes (interval / dirty key) |
+| Reflection image | WebGL RGBA texture (+ MSAA resolve) in GPU VRAM | Yes (every frame on balanced/high) |
+| Final frame | Default framebuffer (`#viewport` canvas) | Every frame |
+| Baked reflection | `assets/baked/<scene>/reflection-<quality>.png` | **No** — generated once, uploaded once |
+
+Live mode never writes combine inputs to disk or `/tmp`. Temporal reuse only keeps the previous GPU texture in the same page session.
+
+**Generate once, reuse forever:**
+
+```bash
+node scripts/bake-images.mjs
+```
+
+This launches headless Chrome, captures each scene × quality at the authored camera, and writes PNGs + `assets/baked/manifest.json`. The demo enables **Use baked images** when a matching entry exists; `renderFrame` then skips the mirror pass and the water material keeps sampling the uploaded bake. Inspector: **Bake images** button or keyboard **B** (downloads captures). API: `ibrt.bakeReflectionCapture`, `ibrt.setBakedReflection`, `window.IBRT.bakeImages()`.
 
 ## Controls
 
@@ -85,6 +107,7 @@ Public entry points:
   - `setQuality(name)`, `allocateTargets()`
   - `buildOrbitCamera(...)`, `buildMirroredCamera(...)`, `buildOrthoLight(...)`
   - `renderFrame({ canvas, camera, light, localLight, objects, water, ... })`
+  - bake helpers: `bakeReflectionCapture(frame)`, `setBakedReflection({ image, camera, planeY })`, `clearBakedReflection()`, `captureReflectionPngDataUrl()`
   - mesh/texture helpers: `buildCube`, `buildPlane`, `buildSphere`, `buildCylinder`, `buildLathe`, `buildTorus`, `buildCapsule`, `buildStadium`, `buildPuddle`, `mergeCubeInstances`, `mergeMeshInstances`, `createTexture`
 
 Company sketch:
@@ -235,6 +258,7 @@ Architecture and development record, including the company integration path, qua
 15. Visual QA (0.6.4): stronger puddle `reflectAmount` + milder balanced water blur/LOD; BAR neon rebuilt as cylinder stems + elliptical tube bowls; default camera reframed so the wet floor reads at a glance; bottles seated on shelf tops; booth brass trim corrected.
 16. Reliability polish (0.6.5): Low water path is true 5-tap; shadow/reflection dirty keys include neon + `contentVersion`; freeze UV warp when reusing reflection RT; shell title/comments drop “View Cell Lab”; remove unused footRail torus mesh.
 17. Portable showcase (0.7.0): `examples/minimal/` drop-in host; lit-pass floor-contact AO; BAR letter A angled tubes + apex ring; clear-glass liquid cores; docs sync.
+18. Persistent bake (0.8.0): reflection combine images can be generated once via `node scripts/bake-images.mjs` into `assets/baked/`; live mode still uses GPU-only RTs that regenerate each frame.
 
 ## Verification
 
@@ -244,19 +268,24 @@ node --check src/main.js
 node --check src/scenes/midnightBar.js
 node --check src/scenes/neonAtrium.js
 node --check examples/minimal/main.js
+node --check scripts/bake-images.mjs
+node scripts/bake-images.mjs
+# optional visual QA screenshots → /opt/cursor/artifacts/screenshots/
+node scripts/qa-browser.mjs
 ```
 
 Serve locally and open in a WebGL2 browser. Checks should include:
 
 - No page/console errors; WebGL `getError() === 0`.
-- `window.IBRT.renderer` exists and exposes `renderFrame` / `setQuality`.
+- `window.IBRT.renderer` exists and exposes `renderFrame` / `setQuality` / `setBakedReflection`.
 - Default scene is Midnight Bar (~45 + 2 draws); switching to Neon Atrium updates inspector copy (~12 + 2).
 - Quality switch rebuilds targets (high → 1536px reflection); Low keeps interactive FPS on iGPU.
 - Side / grazing orbits still show puddle neon / stools without severe shear.
 - Neon toggle drops BAR tubes + local pink light (and their reflection contribution).
-- Module imports succeed over HTTP; `window.IBRT.version` reports `0.7.0`.
+- Module imports succeed over HTTP; `window.IBRT.version` reports `0.8.0`.
 - Neon toggle immediately refreshes shadow/reflection (no stale BAR in the puddle on Low).
 - `/examples/minimal/` renders floor, cube, sphere, and puddle with orbit drag (no console errors).
+- After bake, **Use baked images** loads `assets/baked/**`, telemetry shows `BAKED`, and `skippedReflection` stays true (no per-frame mirror regen).
 
 ## Lower-end GPU considerations
 
@@ -268,6 +297,7 @@ Serve locally and open in a WebGL2 browser. Checks should include:
 - No per-pixel ray traversal.
 - Neon letter strokes merged into a few draw calls instead of dozens of tube instances.
 - Temporal reuse of shadow/reflection targets on low when the camera/light are stable.
+- Optional baked reflection PNGs under `assets/baked/` so the mirror pass can be skipped entirely after one generate.
 - Water mesh stays a single inexpensive disc; motion is shader math.
 - Bar mesh segment counts scale down on the low preset.
 
@@ -285,14 +315,15 @@ Serve locally and open in a WebGL2 browser. Checks should include:
 ## Roadmap
 
 1. ~~Publish a minimal third-party example that imports only `implementation.js`.~~ **Done in 0.7.0** (`examples/minimal/`).
-2. Define an external capture manifest with color image, depth image, camera pose, bounds, and cell neighbors.
-3. Replace selected proxy objects with view-dependent image/depth impostors.
-4. Add depth-assisted reprojection to reduce disocclusion and edge ghosting.
-5. Add streamed nearby view cells with an LRU texture cache.
-6. Add captured normal/roughness imagery for the water and materials.
-7. Benchmark memory, frame time, and visual error on integrated GPUs.
-8. Publish an open capture format and permissively licensed sample scenes.
-9. Optional glTF import path for authored game props while keeping the RT method portable.
+2. ~~Bake reflection combine images to disk for permanent reuse.~~ **Done in 0.8.0** (`scripts/bake-images.mjs` → `assets/baked/`).
+3. Define an external capture manifest with color image, depth image, camera pose, bounds, and cell neighbors (extends the 0.8.0 reflection bake).
+4. Replace selected proxy objects with view-dependent image/depth impostors.
+5. Add depth-assisted reprojection to reduce disocclusion and edge ghosting.
+6. Add streamed nearby view cells with an LRU texture cache.
+7. Add captured normal/roughness imagery for the water and materials.
+8. Benchmark memory, frame time, and visual error on integrated GPUs.
+9. Publish an open capture format and permissively licensed sample scenes.
+10. Optional glTF import path for authored game props while keeping the RT method portable.
 
 ## Design principle
 

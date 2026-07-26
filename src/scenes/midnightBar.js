@@ -31,6 +31,9 @@ function detailLevel(preset) {
 
 // ---------------------------------------------------------------------------
 // Procedural textures (Canvas2D → WebGL, cached across quality rebuilds)
+// These are material albedos, not the reflection combine image. They live in
+// module memory for the page session; the mirror RT is separate (GPU VRAM, or
+// assets/baked/ when persistent bake is enabled).
 // ---------------------------------------------------------------------------
 
 let cachedBarTextures = null;

@@ -144,6 +144,10 @@ h2 { margin-bottom: 10px; font-size: 28px; line-height: 1.05; letter-spacing: -.
 select { width: 118px; padding: 7px 7px; border: 1px solid var(--line); border-radius: 5px; outline: none; color: var(--text); background: var(--surface-2); font-size: 9px; }
 select:focus { border-color: var(--cyan); }
 
+.bake-row { display: grid; gap: 8px; margin-top: 4px; }
+.bake-row .ghost-button { width: 100%; }
+.bake-row .tiny-note { margin: 0; }
+
 .legend-section { flex: 1; }
 .legend-row { gap: 9px; margin: 10px 0; color: #b5cbd3; font-size: 10px; }
 .legend-swatch { width: 9px; height: 9px; border-radius: 2px; }

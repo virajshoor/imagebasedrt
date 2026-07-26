@@ -8,11 +8,24 @@
  * Method summary (replaces classic RT reflection rays):
  *   1. Render casters into a depth shadow map (PCF soft shadows).
  *   2. Reflect the camera across a planar surface and rasterize the scene
- *      into a color "reflection image".
+ *      into a color "reflection image" (GPU texture — not a disk file).
  *   3. Composite a water/mirror mesh that samples that image with Fresnel,
  *      soft undulation, and feathered edges.
  * Lit surfaces also get a cheap height-based contact AO near the floor plane
  * so proxy props read planted without an extra pass.
+ *
+ * Where combine inputs live (default / live mode):
+ *   - Shadow map + reflection image exist only as WebGL framebuffers/textures
+ *     in GPU VRAM for the current page session.
+ *   - They are regenerated most frames (quality presets may skip when stable).
+ *   - Nothing is written under /tmp or to disk unless you explicitly bake.
+ *
+ * Persistent bake (generate once, reuse forever):
+ *   - `bakeReflectionCapture(frame)` forces one mirror pass and returns PNG bytes
+ *     plus the camera pose used for the capture.
+ *   - `setBakedReflection({ image, camera, planeY })` uploads a PNG into the
+ *     reflection texture and skips live regeneration on every later frame.
+ *   - Demo CLI: `node scripts/bake-images.mjs` writes `assets/baked/**`.
  *
  * Usage with the demo shell (Midnight Bar / Neon Atrium):
  *   import { createImageBasedRT, QUALITY_PRESETS } from "./implementation.js";
@@ -24,8 +37,9 @@
  *   ibrt.allocateTargets();
  *   // each frame (bump contentVersion when neon/objects toggle so temporal reuse stays fresh):
  *   ibrt.renderFrame({ canvas, camera, light, localLight, objects, floorObject, water, time, contentVersion, ... });
+ *   // optional: ibrt.setBakedReflection({ image, camera, planeY }) to stop regenerating
  *
- * No framework, no bundler, no external assets required.
+ * No framework, no bundler required. Baked PNGs under assets/baked/ are optional.
  */
 
 // ---------------------------------------------------------------------------
@@ -881,6 +895,11 @@ export function buildStadium(gl, segments = 28, length = 2, width = 1, height = 
   return makeMesh(gl, vertices, indices);
 }
 
+/**
+ * Bake a Canvas2D draw callback into a WebGL texture (session cache only).
+ * Scene modules may keep the returned texture across quality rebuilds; it is
+ * still regenerated on a full page reload unless you ship discrete image files.
+ */
 export function createTexture(gl, draw, size = 128) {
   const image = document.createElement("canvas");
   image.width = size;
@@ -897,6 +916,28 @@ export function createTexture(gl, draw, size = 128) {
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
   return texture;
+}
+
+/** Encode raw RGBA (top-left origin) into a PNG data URL via a 2D canvas. */
+export function rgbaToPngDataUrl(pixels, width, height) {
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  const imageData = ctx.createImageData(width, height);
+  imageData.data.set(pixels);
+  ctx.putImageData(imageData, 0, 0);
+  return canvas.toDataURL("image/png");
+}
+
+/** Decode a data URL / fetchable URL into an HTMLImageElement. */
+export function loadImage(src) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error(`Failed to load image: ${src}`));
+    image.src = src;
+  });
 }
 
 /**
@@ -1022,6 +1063,12 @@ export function createImageBasedRT(gl, options = {}) {
   let preset = { ...QUALITY_PRESETS[qualityName] };
   let shadowTarget = null;
   let reflectionTarget = null;
+  // Uploaded PNG for the water combine pass; when set, mirror regen is skipped forever.
+  let bakedReflection = null;
+  let frameIndex = 0;
+  let lastShadowKey = "";
+  let lastReflectionKey = "";
+  let lastReflectionCamera = null;
 
   const renderProgram = createProgram(gl, litVertexShader(), litFragmentShader());
   const depthProgram = createProgram(gl, depthVertexShader(), depthFragmentShader());
@@ -1200,6 +1247,10 @@ export function createImageBasedRT(gl, options = {}) {
     qualityName = name;
     preset = { ...QUALITY_PRESETS[name] };
     allocateTargets();
+    // Reallocating RTs drops any uploaded bake; host should reload assets/baked/.
+    bakedReflection = null;
+    lastReflectionKey = "";
+    lastReflectionCamera = null;
     return preset;
   }
 
@@ -1382,10 +1433,149 @@ export function createImageBasedRT(gl, options = {}) {
     gl.disable(gl.BLEND);
   }
 
-  let frameIndex = 0;
-  let lastShadowKey = "";
-  let lastReflectionKey = "";
-  let lastReflectionCamera = null;
+  /**
+   * Read the current reflection resolve texture (bottom-up WebGL → top-left PNG).
+   * Combine inputs live in GPU VRAM until this (or bakeReflectionCapture) copies them out.
+   */
+  function captureReflectionRgba() {
+    if (!reflectionTarget) throw new Error("Reflection target is not allocated.");
+    const size = reflectionTarget.size;
+    const raw = new Uint8Array(size * size * 4);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, reflectionTarget.resolveFramebuffer);
+    gl.readPixels(0, 0, size, size, gl.RGBA, gl.UNSIGNED_BYTE, raw);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    // Flip Y so PNG / Image upload matches texImage2D with UNPACK_FLIP_Y.
+    const pixels = new Uint8Array(size * size * 4);
+    const row = size * 4;
+    for (let y = 0; y < size; y += 1) {
+      const src = (size - 1 - y) * row;
+      pixels.set(raw.subarray(src, src + row), y * row);
+    }
+    return { width: size, height: size, pixels };
+  }
+
+  function captureReflectionPngDataUrl() {
+    const { width, height, pixels } = captureReflectionRgba();
+    return rgbaToPngDataUrl(pixels, width, height);
+  }
+
+  /**
+   * Upload a baked reflection image into the GPU combine texture and lock live regen off.
+   * `image` may be an HTMLImageElement, ImageBitmap, or canvas.
+   * `camera` should be the main-camera descriptor used when the image was captured
+   * (we rebuild the mirrored projection from it so UVs stay consistent).
+   */
+  function setBakedReflection({ image, camera, planeY = 0, source = null } = {}) {
+    if (!image) throw new Error("setBakedReflection requires an image.");
+    if (!camera?.cameraPosition || !camera?.viewProjection) {
+      throw new Error("setBakedReflection requires a captured camera with position + viewProjection.");
+    }
+    const width = image.width || image.videoWidth || reflectionTarget.size;
+    const height = image.height || image.videoHeight || reflectionTarget.size;
+    if (width !== height) {
+      throw new Error("Baked reflection images must be square (match the reflection RT).");
+    }
+    if (width !== reflectionTarget.size) {
+      // Rebuild the resolve texture at the bake size so sampling texel size matches.
+      const previousSamples = preset.reflectionSamples;
+      preset.reflectionSize = width;
+      makeReflectionTarget(width);
+      preset.reflectionSamples = previousSamples;
+    }
+    gl.bindTexture(gl.TEXTURE_2D, reflectionTarget.texture);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, image);
+    gl.generateMipmap(gl.TEXTURE_2D);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    const reflectionCamera = buildMirroredCamera(camera, camera.target || [0, 0, 0], 1, planeY);
+    bakedReflection = {
+      camera: reflectionCamera,
+      sourceCamera: {
+        cameraPosition: [...camera.cameraPosition],
+        viewProjection: camera.viewProjection,
+        target: [...(camera.target || [0, 0, 0])],
+      },
+      planeY,
+      size: width,
+      source: source || "baked",
+    };
+    lastReflectionCamera = reflectionCamera;
+    lastReflectionKey = "__baked__";
+    return {
+      size: width,
+      planeY,
+      source: bakedReflection.source,
+    };
+  }
+
+  /** Return to live per-frame (or temporally reused) reflection regeneration. */
+  function clearBakedReflection() {
+    bakedReflection = null;
+    lastReflectionKey = "";
+  }
+
+  function getBakedReflection() {
+    if (!bakedReflection) return null;
+    return {
+      size: bakedReflection.size,
+      planeY: bakedReflection.planeY,
+      source: bakedReflection.source,
+      cameraPosition: [...bakedReflection.camera.cameraPosition],
+    };
+  }
+
+  /**
+   * Force one live mirror pass from `frame`, then return a PNG data URL + pose
+   * suitable for writing under assets/baked/ and reloading with setBakedReflection.
+   */
+  function bakeReflectionCapture(frame) {
+    clearBakedReflection();
+    const {
+      canvas,
+      camera,
+      light,
+      localLight,
+      objects,
+      floorObject = null,
+      water = null,
+      textureEnabled = true,
+      aspect,
+      clearColor = [0.018, 0.04, 0.06, 1],
+    } = frame;
+    const planeY = water?.planeY ?? 0;
+    const reflectionCamera = buildMirroredCamera(camera, camera.target || [0, 0, 0], aspect, planeY);
+    renderDepth(light, objects, (object) => object.enabled !== false);
+    renderOpaque({
+      canvas,
+      camera: reflectionCamera,
+      light,
+      localLight,
+      objects,
+      floorObject,
+      framebuffer: reflectionTarget.framebuffer,
+      includeFloor: false,
+      textureEnabled,
+      debugMarker: null,
+      clearColor,
+      clipBelowY: planeY + 0.02,
+    });
+    resolveReflection();
+    lastReflectionCamera = reflectionCamera;
+    lastReflectionKey = "__bake_capture__";
+    const pngDataUrl = captureReflectionPngDataUrl();
+    return {
+      pngDataUrl,
+      size: reflectionTarget.size,
+      quality: qualityName,
+      planeY,
+      camera: {
+        cameraPosition: [...camera.cameraPosition],
+        target: [...(camera.target || [0, 0, 0])],
+        viewProjection: Array.from(camera.viewProjection),
+      },
+      reflectionCameraPosition: [...reflectionCamera.cameraPosition],
+    };
+  }
 
   /**
    * Full frame: shadow depth -> mirrored reflection image -> main color -> water.
@@ -1394,6 +1584,9 @@ export function createImageBasedRT(gl, options = {}) {
    *
    * Host may pass `contentVersion` (bump on neon/object toggles) so temporal reuse
    * does not keep a stale map after the scene composition changes.
+   *
+   * When a baked reflection is active (`setBakedReflection`), the mirror color
+   * pass is skipped forever and the water composite samples the uploaded image.
    */
   function renderFrame(frame) {
     const {
@@ -1413,7 +1606,10 @@ export function createImageBasedRT(gl, options = {}) {
     } = frame;
 
     frameIndex += 1;
-    const reflectionCamera = buildMirroredCamera(camera, camera.target || [0, 0, 0], aspect, water?.planeY ?? 0);
+    const planeY = water?.planeY ?? 0;
+    const liveReflectionCamera = buildMirroredCamera(camera, camera.target || [0, 0, 0], aspect, planeY);
+    const usingBaked = Boolean(bakedReflection);
+    const reflectionCamera = usingBaked ? bakedReflection.camera : liveReflectionCamera;
     const enabledObjects = objects;
     const lookAt = light.lookAt || [0, 0, 0];
 
@@ -1425,7 +1621,7 @@ export function createImageBasedRT(gl, options = {}) {
       localLight.intensity.toFixed(2),
       contentVersion,
     ].join("|");
-    const reflectionKey = [
+    const reflectionKey = usingBaked ? "__baked__" : [
       camera.cameraPosition[0].toFixed(2),
       camera.cameraPosition[1].toFixed(2),
       camera.cameraPosition[2].toFixed(2),
@@ -1438,7 +1634,10 @@ export function createImageBasedRT(gl, options = {}) {
     const shadowDirty = shadowKey !== lastShadowKey;
     const reflectionDirty = reflectionKey !== lastReflectionKey;
     const runShadow = shadowDirty || frameIndex % (preset.shadowInterval || 1) === 0;
-    const runReflection = reflectionDirty || frameIndex % (preset.reflectionInterval || 1) === 0;
+    // Baked mode: never regenerate the combine image — it was generated once on disk.
+    const runReflection = !usingBaked && (
+      reflectionDirty || frameIndex % (preset.reflectionInterval || 1) === 0
+    );
 
     if (runShadow) {
       renderDepth(light, enabledObjects, (object) => object.enabled !== false);
@@ -1446,7 +1645,6 @@ export function createImageBasedRT(gl, options = {}) {
     }
 
     if (runReflection) {
-      const planeY = water?.planeY ?? 0;
       renderOpaque({
         canvas,
         camera: reflectionCamera,
@@ -1497,6 +1695,7 @@ export function createImageBasedRT(gl, options = {}) {
       quality: qualityName,
       skippedShadow: !runShadow,
       skippedReflection: !runReflection,
+      bakedReflection: usingBaked,
     };
   }
 
@@ -1508,12 +1707,18 @@ export function createImageBasedRT(gl, options = {}) {
     get preset() { return { ...preset }; },
     get shadowTarget() { return shadowTarget; },
     get reflectionTarget() { return reflectionTarget; },
+    get reflectionMode() { return bakedReflection ? "baked" : "live"; },
     setQuality,
     allocateTargets,
     buildOrbitCamera,
     buildMirroredCamera,
     buildOrthoLight,
     renderFrame,
+    captureReflectionPngDataUrl,
+    bakeReflectionCapture,
+    setBakedReflection,
+    clearBakedReflection,
+    getBakedReflection,
     makeMesh: (vertices, indices) => makeMesh(gl, vertices, indices),
     buildCube: () => buildCube(gl),
     buildPlane: () => buildPlane(gl),

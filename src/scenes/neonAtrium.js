@@ -40,6 +40,8 @@ function pushOval(list, cx, y, z, radiusX, radiusY, tube, segments) {
   }
 }
 
+// Material albedos only (session-cached). Reflection combine images are GPU RTs
+// or assets/baked/ PNGs — see scripts/bake-images.mjs.
 let cachedAtriumTextures = null;
 
 function createAtriumTextures(ibrt) {

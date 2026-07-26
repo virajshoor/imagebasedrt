@@ -10,7 +10,7 @@ The prototype has moved from an initial 2D view-cell experiment to a stable WebG
 
 - A portable method module (`src/implementation.js`) that companies can drop into their own WebGL2 apps.
 - A demo shell (`src/main.js`) with scene switching, orbit/WASD controls, and inspector UI.
-- **Midnight Bar** (`src/scenes/midnightBar.js`, IBRT **0.6.4**): lathed bottles, stadium bar counter, stools, pendants, draft taps, booths, BAR neon, wet-floor puddle; same-material batches via `mergeMeshInstances` (~42 draws).
+- **Midnight Bar** (`src/scenes/midnightBar.js`, IBRT **0.6.5**): lathed bottles, stadium bar counter, stools, pendants, draft taps, booths, BAR neon, wet-floor puddle; same-material batches via `mergeMeshInstances` (~42 draws).
 - **Neon Atrium** (`src/scenes/neonAtrium.js`): lighter Buildathon atrium with letterform NEON and a feathered puddle.
 - Curved mesh helpers: cylinder, lathe, torus, capsule, stadium (plus cube / plane / sphere / puddle) and `mergeMeshInstances` for batched props.
 - BAR neon bowls are wall-facing elliptical tubes (`makeMesh`); stems are merged cylinders — not hatched box ovals.
@@ -145,11 +145,11 @@ scene meshes
 
 | Quality | Shadow | Reflection | PCF | Water blur | Max DPR | Refresh |
 | --- | ---: | ---: | --- | --- | ---: | --- |
-| Low · iGPU | 256px | 640px · 2× MSAA | 1-tap | soft + mips | 1.0 | Shadow every 2 frames when still |
-| Balanced · showcase | 512px | 1024px · 4× MSAA | 4-tap diagonal | mild soft + mips | 1.0 | Every frame |
-| High | 1024px | 1536px · 4× MSAA | 3x3 | soft + mips | 1.5 | Every frame |
+| Low · iGPU | 256px | 640px · 2× MSAA | 1-tap | 5-tap + mips | 1.0 | Shadow every 2 frames when still |
+| Balanced · showcase | 512px | 1024px · 4× MSAA | 4-tap diagonal | 9-tap + mips | 1.0 | Every frame |
+| High | 1024px | 1536px · 4× MSAA | 3x3 | 13-tap + mips | 1.5 | Every frame |
 
-Reflection images are rendered with MSAA, resolved into a mipmapped texture, then sampled with a multi-tap LOD-biased kernel. Balanced keeps a milder blur/LOD so BAR neon stays readable in the puddle while still hiding stair-steps.
+Reflection images are rendered with MSAA, resolved into a mipmapped texture, then sampled with a quality-gated multi-tap LOD-biased kernel (`waterBlur` 0 / 1 / 2). When a reflection frame is skipped, water UV warp is frozen so the puddle does not swim against a stale map. Dirty keys include full light pose, neon intensity, and a host `contentVersion` (bumped on neon / accent toggles).
 
 Additional lower-end choices in the implementation:
 
@@ -231,6 +231,7 @@ Architecture and development record, including the company integration path, qua
 13. Midnight Bar scene added with lathe/cylinder/torus/capsule/stadium helpers for a denser game-style reflection stress test; scenes split into `src/scenes/` with an inspector switcher.
 14. Buildathon polish: `mergeMeshInstances` batches same-material bar props; Low preset uses cheaper mesh density; inspector pitch / Try this copy; README “What to look for”.
 15. Visual QA (0.6.4): stronger puddle `reflectAmount` + milder balanced water blur/LOD; BAR neon rebuilt as cylinder stems + elliptical tube bowls; default camera reframed so the wet floor reads at a glance; bottles seated on shelf tops; booth brass trim corrected.
+16. Reliability polish (0.6.5): Low water path is true 5-tap; shadow/reflection dirty keys include neon + `contentVersion`; freeze UV warp when reusing reflection RT; shell title/comments drop “View Cell Lab”; remove unused footRail torus mesh.
 
 ## Verification
 
@@ -249,7 +250,8 @@ Serve locally and open in a WebGL2 browser. Checks should include:
 - Quality switch rebuilds targets (high → 1536px reflection); Low keeps interactive FPS on iGPU.
 - Side / grazing orbits still show puddle neon / stools without severe shear.
 - Neon toggle drops BAR tubes + local pink light (and their reflection contribution).
-- Module imports succeed over HTTP; `window.IBRT.version` reports `0.6.4`.
+- Module imports succeed over HTTP; `window.IBRT.version` reports `0.6.5`.
+- Neon toggle immediately refreshes shadow/reflection (no stale BAR in the puddle on Low).
 
 ## Lower-end GPU considerations
 

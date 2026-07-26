@@ -7,8 +7,10 @@
  *   - Lathed bottles / glassware (solids of revolution)
  *   - Stadium (pill-shaped) bar counter and shelves
  *   - Capsule booths, torus stool rings, pendant spheres
+ *   - BAR neon: cylinder stems + smooth elliptical tube bowls
  *   - Wet-floor puddle that mirrors the back-bar + BAR neon
  *
+ * Same-material props batch via `mergeMeshInstances` (~42 opaque draws).
  * Consumed by `main.js` via `buildMidnightBar(ibrt, preset)`.
  * Returns a scene descriptor: objects, water, camera defaults, lights, bounds.
  */
@@ -360,7 +362,7 @@ function obj(mesh, position, scale, color, texture, extras = {}) {
 
 /**
  * Push one draw for many transforms of the same mesh + material.
- * Same-material bottle/stool/stemware groups collapse from N draws → 1.
+ * Same-material bottle/stool/glassware groups collapse from N draws → 1.
  */
 function pushMerged(ibrt, objects, sourceMesh, instances, color, texture, extras = {}) {
   if (!instances.length) return;
@@ -413,7 +415,6 @@ export function buildMidnightBar(ibrt, preset) {
     torus: ibrt.buildTorus(detail.torus[0], detail.torus[1], 1, 0.22),
     seat: ibrt.buildCylinder(detail.segs, 1, 1, 1, true),
     stadium: ibrt.buildStadium(detail.segs, 2.2, 1, 0.18), // pill-shaped counter / shelves
-    footRail: ibrt.buildTorus(detail.torus[0], detail.torus[1], 1, 0.08),
     wine: ibrt.buildLathe(PROFILES.wine, detail.lathe),
     whiskey: ibrt.buildLathe(PROFILES.whiskey, detail.lathe),
     decanter: ibrt.buildLathe(PROFILES.decanter, detail.lathe),
@@ -449,11 +450,11 @@ export function buildMidnightBar(ibrt, preset) {
     { position: [5.2, 2.2, -4.85], scale: [0.08, 2.4, 0.08] },
   ], [0.55, 0.42, 0.28, 1], tex.brass, { gloss: 110 });
 
-  // --- Curved bar counter + brass foot rail --------------------------------
+  // --- Curved bar counter + brass foot rail (cylinder segments, one batch) -
   objects.push(obj(meshes.stadium, [0, 0.52, 0.35], [2.85, 1.55, 0.95], [0.42, 0.26, 0.16, 1], tex.wood, { gloss: 55 }));
   objects.push(obj(meshes.stadium, [0, 1.08, 0.35], [2.95, 0.55, 1.05], [0.82, 0.78, 0.74, 1], tex.marble, { gloss: 120 }));
   objects.push(obj(meshes.cylinder, [0, 0.28, 0.35], [2.55, 0.12, 0.72], [0.45, 0.32, 0.18, 1], tex.wood, { gloss: 40 }));
-  // Foot-rail segments + draft-tap columns share brass cylinder material.
+  // Foot-rail tubes + draft-tap columns share brass cylinder material.
   pushMerged(ibrt, objects, meshes.cylinder, [
     ...[-3.6, -1.8, 0, 1.8, 3.6].map((x) => ({
       position: [x, 0.22, 1.55],
@@ -492,7 +493,7 @@ export function buildMidnightBar(ibrt, preset) {
   })), [0.35, 0.28, 0.18, 1], tex.dark, { cast: false, gloss: 40 });
 
   // --- Glassware / bottles: one bucket map so shelf + counter share draws ---
-  // Tight palette → fewer unique material keys → fewer draws (target ~30–40).
+  // Tight palette → fewer unique material keys → fewer draws (target ~42 with neon).
   const C = {
     redWine: [0.32, 0.06, 0.12, 1],
     whiskey: [0.5, 0.22, 0.08, 1],

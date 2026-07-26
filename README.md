@@ -125,13 +125,13 @@ Mesh helpers available on the factory (and as named exports): `buildCube`, `buil
 
 ### Quality presets (lower-end first)
 
-| Preset | Shadow | Reflection | PCF | Water blur | Max DPR |
-| --- | ---: | ---: | --- | --- | ---: |
-| Low · iGPU | 256px | 640px · 2× MSAA | 1-tap | soft + mips | 1.0 |
-| Balanced · showcase | 512px | 1024px · 4× MSAA | 4-tap | mild soft + mips | 1.0 |
-| High | 1024px | 1536px · 4× MSAA | 3×3 | soft + mips | 1.5 |
+| Preset | Shadow | Reflection | PCF | Water blur | Max DPR | Notes |
+| --- | ---: | ---: | --- | --- | ---: | --- |
+| Low · iGPU | 256px | 640px · 2× MSAA | 1-tap | 5-tap + mips | 1.0 | Shadow refresh every 2 frames when still |
+| Balanced · showcase | 512px | 1024px · 4× MSAA | 4-tap | 9-tap + mips | 1.0 | Default showcase |
+| High | 1024px | 1536px · 4× MSAA | 3×3 | 13-tap + mips | 1.5 | Wider water kernel |
 
-Neon letters batch into a few draws (housing cubes, cylinder stems, elliptical bowls). The mirror pass uses MSAA + mipmaps and a multi-tap sample so puddle neon stays readable instead of stair-stepped.
+Neon letters batch into a few draws (housing cubes, cylinder stems, elliptical bowls). The mirror pass uses MSAA + mipmaps. Temporal reuse freezes water UV warp when the reflection image is skipped, and `contentVersion` invalidates maps when neon toggles.
 
 ---
 

@@ -87,6 +87,8 @@ let viewportHeight = 1;
 let lastFrame = performance.now();
 let fps = 60;
 let telemetryTick = 0;
+/** Bumped when neon/object composition changes so RT temporal reuse invalidates. */
+let contentVersion = 0;
 let sceneObjects = [];
 let floorObject = null;
 let puddleObject = null;
@@ -141,6 +143,7 @@ function syncNeonEnabled() {
     object.enabled = !object.neon || state.neon;
     if (object.enabled) enabledDrawCount += 1;
   });
+  contentVersion += 1;
 }
 
 function buildLocalLight() {
@@ -198,6 +201,7 @@ function renderScene(now) {
     time: now / 1000,
     aspect,
     clearColor: activeScene?.clearColor || [0.016, 0.038, 0.055, 1],
+    contentVersion,
   });
 
   telemetryTick += 1;
@@ -289,7 +293,10 @@ window.addEventListener("keyup", (event) => {
   if (key === "arrowright") keys.delete("d");
 });
 
-el.accents.addEventListener("change", () => { state.imageAccents = el.accents.checked; });
+el.accents.addEventListener("change", () => {
+  state.imageAccents = el.accents.checked;
+  contentVersion += 1;
+});
 el.neon.addEventListener("change", () => {
   state.neon = el.neon.checked;
   syncNeonEnabled();
@@ -323,7 +330,7 @@ rebuildScene({ resetCamera: true });
 resize();
 
 window.IBRT = {
-  version: "0.6.4",
+  version: "0.6.5",
   qualityPresets: QUALITY_PRESETS,
   renderer: ibrt,
   state,

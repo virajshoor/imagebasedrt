@@ -20,8 +20,8 @@
  *   const ibrt = createImageBasedRT(gl, { quality: "low" });
  *   ibrt.setQuality("low");                 // cheaper maps / fewer taps
  *   ibrt.allocateTargets();
- *   // each frame:
- *   ibrt.renderFrame({ canvas, camera, light, localLight, objects, floorObject, water, time, ... });
+ *   // each frame (bump contentVersion when neon/objects toggle so temporal reuse stays fresh):
+ *   ibrt.renderFrame({ canvas, camera, light, localLight, objects, floorObject, water, time, contentVersion, ... });
  *
  * No framework, no bundler, no external assets required.
  */
@@ -37,14 +37,14 @@ export const QUALITY_PRESETS = {
     reflectionSize: 640,
     reflectionSamples: 2, // MSAA on the mirror pass (cheap edge cleanup)
     pcfMode: 0,           // 1-tap shadow
-    waterBlur: 1,         // 5-tap + mip bias (kills stair-steps)
+    waterBlur: 0,         // 5-tap + mip bias (iGPU water path)
     maxPixelRatio: 1,
     shadowStrength: 0.7,
     puddleSegments: 40,
     puddleRings: 3,
     neonDetail: "low",
     antialias: false,
-    shadowInterval: 2,
+    shadowInterval: 2,    // reuse shadow map on alternate frames when still
     reflectionInterval: 1,
   },
   // Default demo path: readable neon letters, still modest VRAM.
@@ -53,7 +53,7 @@ export const QUALITY_PRESETS = {
     reflectionSize: 1024,
     reflectionSamples: 4,
     pcfMode: 1,           // 4-tap diagonal PCF
-    waterBlur: 1,         // soft enough for AA, sharp enough to read neon in the puddle
+    waterBlur: 1,         // 9-tap soft sample; sharp enough to read neon in the puddle
     maxPixelRatio: 1,
     shadowStrength: 0.86,
     puddleSegments: 56,
@@ -69,7 +69,7 @@ export const QUALITY_PRESETS = {
     reflectionSize: 1536,
     reflectionSamples: 4,
     pcfMode: 2,           // 3x3 PCF
-    waterBlur: 2,
+    waterBlur: 2,         // 13-tap wider kernel
     maxPixelRatio: 1.5,
     shadowStrength: 0.92,
     puddleSegments: 80,
@@ -390,6 +390,7 @@ uniform float uNeonIntensity;
 uniform float uOpacity;
 uniform float uTexelSize;
 uniform float uWaterBlur;
+uniform float uWarpScale; // 0 when reusing a stale reflection RT (freeze UV swim)
 out vec4 outColor;
 
 vec2 softWave(vec2 p, float t) {
@@ -399,16 +400,20 @@ vec2 softWave(vec2 p, float t) {
   );
 }
 
-// Soft multi-tap sample + mild mip bias so neon stays readable without stair-steps.
+// Soft multi-tap sample + mild mip bias. Tap count follows uWaterBlur:
+//   0 → 5 taps (low / iGPU), 1 → 9 taps (balanced), 2 → 13 taps (high).
 vec3 sampleReflection(vec2 uv, float texel, float mode, float extraLod) {
   float lodBias = (mode < 0.5 ? 0.35 : mode < 1.5 ? 0.55 : 0.95) + extraLod;
-  vec2 o = vec2(texel * (mode < 1.5 ? 1.2 : 1.9) * (1.0 + extraLod * 0.35));
-  vec3 color = texture(uReflectionTexture, uv, lodBias).rgb * 0.28;
-  color += texture(uReflectionTexture, uv + vec2(o.x, 0.0), lodBias).rgb * 0.12;
-  color += texture(uReflectionTexture, uv - vec2(o.x, 0.0), lodBias).rgb * 0.12;
-  color += texture(uReflectionTexture, uv + vec2(0.0, o.y), lodBias).rgb * 0.12;
-  color += texture(uReflectionTexture, uv - vec2(0.0, o.y), lodBias).rgb * 0.12;
+  vec2 o = vec2(texel * (mode < 0.5 ? 1.0 : mode < 1.5 ? 1.2 : 1.9) * (1.0 + extraLod * 0.35));
+  // Center + 4 axis (5-tap low path).
+  vec3 color = texture(uReflectionTexture, uv, lodBias).rgb * 0.36;
+  color += texture(uReflectionTexture, uv + vec2(o.x, 0.0), lodBias).rgb * 0.16;
+  color += texture(uReflectionTexture, uv - vec2(o.x, 0.0), lodBias).rgb * 0.16;
+  color += texture(uReflectionTexture, uv + vec2(0.0, o.y), lodBias).rgb * 0.16;
+  color += texture(uReflectionTexture, uv - vec2(0.0, o.y), lodBias).rgb * 0.16;
+  if (mode < 0.5) return color;
   // Rotated taps catch diagonal neon strokes that axis-aligned samples miss.
+  color *= 0.76;
   vec2 r = o * 0.72;
   color += texture(uReflectionTexture, uv + vec2(r.x, r.y), lodBias).rgb * 0.06;
   color += texture(uReflectionTexture, uv + vec2(-r.x, r.y), lodBias).rgb * 0.06;
@@ -428,7 +433,8 @@ void main() {
   vec3 viewDirection = normalize(uCameraPosition - vWorldPosition);
   float interior = 1.0 - vRadial;
   // Keep undulation gentle so reflection texels are not sheared into jaggies.
-  vec2 wave = softWave(vWorldPosition.xz, uTime) * (0.18 + interior * 0.35);
+  // Zero UV/normal warp when the mirror RT was reused this frame (no swim vs stale image).
+  vec2 wave = softWave(vWorldPosition.xz, uTime) * (0.18 + interior * 0.35) * uWarpScale;
   vec3 surfaceNormal = normalize(vNormal + vec3(wave.x * 0.022, 0.0, wave.y * 0.022));
   float facing = clamp(dot(surfaceNormal, viewDirection), 0.0, 1.0);
   float clipW = max(vReflectionClipPosition.w, 1e-4);
@@ -1057,6 +1063,7 @@ export function createImageBasedRT(gl, options = {}) {
     opacity: gl.getUniformLocation(waterProgram, "uOpacity"),
     texelSize: gl.getUniformLocation(waterProgram, "uTexelSize"),
     waterBlur: gl.getUniformLocation(waterProgram, "uWaterBlur"),
+    warpScale: gl.getUniformLocation(waterProgram, "uWarpScale"),
   };
 
   function makeShadowTarget(size) {
@@ -1231,6 +1238,7 @@ export function createImageBasedRT(gl, options = {}) {
     const lightProjection = mat4Orthographic(-halfExtent, halfExtent, -halfExtent, halfExtent, 0.1, 22);
     return {
       lightPosition: position,
+      lookAt,
       lightViewProjection: mat4Multiply(lightProjection, lightView),
     };
   }
@@ -1332,6 +1340,7 @@ export function createImageBasedRT(gl, options = {}) {
     localLight,
     water,
     time,
+    warpScale = 1,
   }) {
     if (!water) return;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -1351,6 +1360,7 @@ export function createImageBasedRT(gl, options = {}) {
     gl.uniform1f(waterUniforms.opacity, water.opacity ?? 0.94);
     gl.uniform1f(waterUniforms.texelSize, 1 / reflectionTarget.size);
     gl.uniform1f(waterUniforms.waterBlur, preset.waterBlur);
+    gl.uniform1f(waterUniforms.warpScale, warpScale);
     gl.activeTexture(gl.TEXTURE2);
     gl.bindTexture(gl.TEXTURE_2D, reflectionTarget.texture);
     gl.uniform1i(waterUniforms.reflectionTexture, 2);
@@ -1373,6 +1383,9 @@ export function createImageBasedRT(gl, options = {}) {
    * Full frame: shadow depth -> mirrored reflection image -> main color -> water.
    * Shadow/reflection passes can refresh on an interval when the view is stable,
    * which keeps frame time lower on integrated GPUs.
+   *
+   * Host may pass `contentVersion` (bump on neon/object toggles) so temporal reuse
+   * does not keep a stale map after the scene composition changes.
    */
   function renderFrame(frame) {
     const {
@@ -1388,20 +1401,30 @@ export function createImageBasedRT(gl, options = {}) {
       time = 0,
       aspect,
       clearColor = [0.018, 0.04, 0.06, 1],
+      contentVersion = 0,
     } = frame;
 
     frameIndex += 1;
     const reflectionCamera = buildMirroredCamera(camera, camera.target || [0, 0, 0], aspect, water?.planeY ?? 0);
     const enabledObjects = objects;
+    const lookAt = light.lookAt || [0, 0, 0];
 
-    const shadowKey = `${light.lightPosition[0].toFixed(2)},${light.lightPosition[2].toFixed(2)}`;
+    // Include full light pose, neon intensity, and host contentVersion so toggles
+    // (e.g. Bar neon off) invalidate temporal shadow/reflection reuse immediately.
+    const shadowKey = [
+      light.lightPosition.map((v) => v.toFixed(2)).join(","),
+      lookAt.map((v) => v.toFixed(2)).join(","),
+      localLight.intensity.toFixed(2),
+      contentVersion,
+    ].join("|");
     const reflectionKey = [
       camera.cameraPosition[0].toFixed(2),
       camera.cameraPosition[1].toFixed(2),
       camera.cameraPosition[2].toFixed(2),
       (camera.target || [0, 0, 0]).map((v) => v.toFixed(2)).join(","),
-      localLight.intensity.toFixed(1),
+      localLight.intensity.toFixed(2),
       textureEnabled ? 1 : 0,
+      contentVersion,
     ].join("|");
 
     const shadowDirty = shadowKey !== lastShadowKey;
@@ -1456,6 +1479,8 @@ export function createImageBasedRT(gl, options = {}) {
       localLight,
       water,
       time,
+      // Freeze fragment UV warp when reusing last mirror image (no swim vs stale RT).
+      warpScale: runReflection ? 1 : 0,
     });
 
     return {

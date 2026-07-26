@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#071018" />
-    <title>Image Based RT // View Cell Lab</title>
+    <title>Image Based RT // Open Source Rendering Lab</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
@@ -29,12 +29,13 @@
            exposes the active render pipeline and interaction state. -->
       <section class="workspace">
         <div class="viewport-wrap">
-          <!-- WebGL2 draws the 3D atrium, shadow map result, and water pass. -->
+          <!-- WebGL2 draws the active scene, shadow map, mirrored reflection, and water. -->
           <canvas id="viewport" aria-label="Interactive image-based rendering scene"></canvas>
           <div class="viewport-label">REALTIME 3D <span>•</span> IMAGE REFLECTION + SHADOW MAP</div>
           <div class="control-hint">
             <span class="key">DRAG</span> orbit
             <span class="key">WASD</span> move
+            <span class="key">WHEEL</span> zoom
             <span class="key">Q/E</span> light
             <span class="key">R</span> reset
           </div>
@@ -57,13 +58,13 @@
             </label>
           </div>
 
-          <!-- Values are updated by updateTelemetry() in src/main.js. -->
+          <!-- Telemetry values are refreshed from the animation loop in src/main.js. -->
           <div class="inspector-section telemetry-section">
             <div class="section-heading"><span>RUNTIME TELEMETRY</span><span class="live-pill">LIVE</span></div>
             <div class="telemetry-grid">
               <div class="metric"><span class="metric-label">RENDERER</span><strong id="cellReadout">WEBGL2</strong></div>
               <div class="metric"><span class="metric-label">REFLECT</span><strong id="blendReadout">1024px</strong></div>
-              <div class="metric"><span class="metric-label">DRAWS</span><strong id="passReadout">2 + 1</strong></div>
+              <div class="metric"><span class="metric-label">DRAWS</span><strong id="passReadout">42 + 2</strong></div>
               <div class="metric"><span class="metric-label">FRAME</span><strong id="frameReadout">60 FPS</strong></div>
             </div>
           </div>
@@ -108,7 +109,7 @@
 
           <!-- Documentation link intentionally stays available from the demo. -->
           <footer class="inspector-footer">
-            <span>IBRT / 0.6.4</span>
+            <span>IBRT / 0.6.5</span>
             <a href="./PROJECT.md">Read project notes ↗</a>
           </footer>
         </aside>

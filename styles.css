@@ -95,6 +95,34 @@ h2 { margin-bottom: 10px; font-size: 28px; line-height: 1.05; letter-spacing: -.
 .inspector-section { padding: 20px; border-bottom: 1px solid var(--line); }
 .intro-section { padding-top: 25px; }
 .muted { max-width: 245px; margin-bottom: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.pitch-line {
+  max-width: 245px;
+  margin: 12px 0 0;
+  color: var(--cyan);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+.try-this {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-width: 245px;
+  margin: 12px 0 14px;
+  padding: 10px 11px;
+  border: 1px solid rgba(113, 230, 227, 0.22);
+  border-radius: 6px;
+  background: rgba(113, 230, 227, 0.06);
+  color: #c5dde6;
+  font-size: 10px;
+  line-height: 1.5;
+}
+.try-this > span:first-child {
+  color: var(--cyan);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.13em;
+}
 .section-heading { justify-content: space-between; margin-bottom: 15px; color: var(--muted); font-size: 9px; font-weight: 700; }
 .live-pill { padding: 4px 6px; border: 1px solid rgba(113, 230, 227, .3); border-radius: 3px; color: var(--cyan); font-size: 8px; }
 .telemetry-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 10px; }

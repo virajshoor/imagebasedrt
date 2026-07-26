@@ -44,6 +44,7 @@ const el = {
   sceneTitle: document.querySelector("#sceneTitle"),
   sceneBlurb: document.querySelector("#sceneBlurb"),
   legendNote: document.querySelector("#legendNote"),
+  tryThis: document.querySelector("#tryThisNote"),
   reset: document.querySelector("#resetButton"),
 };
 
@@ -103,6 +104,7 @@ function applySceneMeta(meta) {
   if (el.sceneTitle) el.sceneTitle.textContent = meta.title;
   if (el.sceneBlurb) el.sceneBlurb.textContent = meta.blurb;
   if (el.legendNote) el.legendNote.textContent = meta.legendNote;
+  if (el.tryThis && meta.tryThis) el.tryThis.textContent = meta.tryThis;
   if (el.neonLabel) el.neonLabel.textContent = meta.neonLabel;
   if (el.neonHint) el.neonHint.textContent = meta.neonHint;
 }
@@ -321,7 +323,7 @@ rebuildScene({ resetCamera: true });
 resize();
 
 window.IBRT = {
-  version: "0.6.1",
+  version: "0.6.2",
   qualityPresets: QUALITY_PRESETS,
   renderer: ibrt,
   state,

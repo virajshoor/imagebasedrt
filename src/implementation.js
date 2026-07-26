@@ -501,14 +501,17 @@ export function createProgram(gl, vertexSource, fragmentSource) {
 }
 
 export function makeMesh(gl, vertices, indices) {
+  // Keep CPU copies so mergeMeshInstances can bake many transforms into one draw.
+  const vertexData = vertices instanceof Float32Array ? vertices : new Float32Array(vertices);
+  const indexData = indices instanceof Uint16Array ? indices : new Uint16Array(indices);
   const vao = gl.createVertexArray();
   const vertexBuffer = gl.createBuffer();
   const indexBuffer = gl.createBuffer();
   gl.bindVertexArray(vao);
   gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
+  gl.bufferData(gl.ARRAY_BUFFER, vertexData, gl.STATIC_DRAW);
   gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
-  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(indices), gl.STATIC_DRAW);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indexData, gl.STATIC_DRAW);
   const stride = 8 * Float32Array.BYTES_PER_ELEMENT;
   gl.enableVertexAttribArray(0);
   gl.vertexAttribPointer(0, 3, gl.FLOAT, false, stride, 0);
@@ -517,7 +520,7 @@ export function makeMesh(gl, vertices, indices) {
   gl.enableVertexAttribArray(2);
   gl.vertexAttribPointer(2, 2, gl.FLOAT, false, stride, 6 * Float32Array.BYTES_PER_ELEMENT);
   gl.bindVertexArray(null);
-  return { vao, count: indices.length };
+  return { vao, count: indexData.length, vertices: vertexData, indices: indexData };
 }
 
 export function buildCube(gl) {
@@ -879,6 +882,65 @@ export function createTexture(gl, draw, size = 128) {
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
   return texture;
+}
+
+/**
+ * Bake many transforms of one source mesh into a single draw call.
+ * Source must come from makeMesh / builders (retains .vertices / .indices).
+ * Instances: { position, scale, rotation?, rotationZ? }
+ */
+export function mergeMeshInstances(gl, sourceMesh, instances) {
+  if (!sourceMesh?.vertices || !sourceMesh?.indices) {
+    throw new Error("mergeMeshInstances needs a mesh with retained CPU geometry.");
+  }
+  if (!instances.length) throw new Error("mergeMeshInstances needs at least one instance.");
+  const srcV = sourceMesh.vertices;
+  const srcI = sourceMesh.indices;
+  const stride = 8;
+  const vertCount = srcV.length / stride;
+  const vertices = [];
+  const indices = [];
+  let base = 0;
+  instances.forEach((instance) => {
+    const matrix = makeModel(
+      instance.position,
+      instance.scale,
+      instance.rotation || 0,
+      instance.rotationZ || 0,
+    );
+    const normalMatrix = [
+      [matrix[0], matrix[1], matrix[2]],
+      [matrix[4], matrix[5], matrix[6]],
+      [matrix[8], matrix[9], matrix[10]],
+    ];
+    for (let i = 0; i < vertCount; i += 1) {
+      const o = i * stride;
+      const px = srcV[o];
+      const py = srcV[o + 1];
+      const pz = srcV[o + 2];
+      const nx = srcV[o + 3];
+      const ny = srcV[o + 4];
+      const nz = srcV[o + 5];
+      const u = srcV[o + 6];
+      const v = srcV[o + 7];
+      const wx = matrix[0] * px + matrix[4] * py + matrix[8] * pz + matrix[12];
+      const wy = matrix[1] * px + matrix[5] * py + matrix[9] * pz + matrix[13];
+      const wz = matrix[2] * px + matrix[6] * py + matrix[10] * pz + matrix[14];
+      const nnx = normalMatrix[0][0] * nx + normalMatrix[1][0] * ny + normalMatrix[2][0] * nz;
+      const nny = normalMatrix[0][1] * nx + normalMatrix[1][1] * ny + normalMatrix[2][1] * nz;
+      const nnz = normalMatrix[0][2] * nx + normalMatrix[1][2] * ny + normalMatrix[2][2] * nz;
+      const inv = 1 / (Math.hypot(nnx, nny, nnz) || 1);
+      vertices.push(wx, wy, wz, nnx * inv, nny * inv, nnz * inv, u, v);
+    }
+    for (let i = 0; i < srcI.length; i += 1) {
+      indices.push(base + srcI[i]);
+    }
+    base += vertCount;
+  });
+  if (indices.length > 65535) {
+    throw new Error("Merged mesh exceeds Uint16 index limit; split the batch.");
+  }
+  return makeMesh(gl, vertices, indices);
 }
 
 // Bake many transformed unit-cubes into one mesh so letter strokes share a draw.
@@ -1431,6 +1493,7 @@ export function createImageBasedRT(gl, options = {}) {
     buildStadium: (segments, length, width, height) => buildStadium(gl, segments, length, width, height),
     buildPuddle: (segments, rings) => buildPuddle(gl, segments ?? preset.puddleSegments, rings ?? preset.puddleRings),
     mergeCubeInstances: (instances) => mergeCubeInstances(gl, instances),
+    mergeMeshInstances: (sourceMesh, instances) => mergeMeshInstances(gl, sourceMesh, instances),
     createTexture: (draw, size) => createTexture(gl, draw, size),
     makeModel,
     clamp,

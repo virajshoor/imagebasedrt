@@ -216,6 +216,7 @@ export const neonAtriumMeta = {
   neonLabel: "Neon sign",
   neonHint: "Letterform NEON tubes and colored local light",
   legendNote: "The round puddle reflects a mirrored scene image of the NEON letter sign, then gently warps it with soft undulation and thin feathered edges.",
+  tryThis: "Cheap baseline: orbit around the NEON sign and watch the puddle. Compare draw count to Midnight Bar, then switch GPU quality → Low.",
 };
 
 export function buildNeonAtrium(ibrt, preset) {

@@ -10,9 +10,10 @@ The prototype has moved from an initial 2D view-cell experiment to a stable WebG
 
 - A portable method module (`src/implementation.js`) that companies can drop into their own WebGL2 apps.
 - A demo shell (`src/main.js`) with scene switching, orbit/WASD controls, and inspector UI.
-- **Midnight Bar** (`src/scenes/midnightBar.js`): lathed bottles, stadium bar counter, stools, pendants, draft taps, BAR neon, wet-floor puddle (~130 draws).
+- **Midnight Bar** (`src/scenes/midnightBar.js`): lathed bottles, stadium bar counter, stools, pendants, draft taps, BAR neon, wet-floor puddle; same-material batches via `mergeMeshInstances` (~40 draws).
 - **Neon Atrium** (`src/scenes/neonAtrium.js`): lighter Buildathon atrium with letterform NEON and a feathered puddle.
-- Curved mesh helpers: cylinder, lathe, torus, capsule, stadium (plus cube / plane / sphere / puddle).
+- Curved mesh helpers: cylinder, lathe, torus, capsule, stadium (plus cube / plane / sphere / puddle) and `mergeMeshInstances` for batched props.
+- Inspector pitch + “Try this” tips so judges understand the method without reading the README.
 - Interactive orbit camera, zoom, WASD/arrow movement, and camera bounds per scene.
 - A dynamic key light that can be moved with `Q` / `E`.
 - Quality-scaled soft shadows (1-tap, 4-tap diagonal, or 3x3 PCF) from a depth map.
@@ -82,7 +83,7 @@ Public entry points:
   - `setQuality(name)`, `allocateTargets()`
   - `buildOrbitCamera(...)`, `buildMirroredCamera(...)`, `buildOrthoLight(...)`
   - `renderFrame({ canvas, camera, light, localLight, objects, water, ... })`
-  - mesh/texture helpers: `buildCube`, `buildPlane`, `buildSphere`, `buildCylinder`, `buildLathe`, `buildTorus`, `buildCapsule`, `buildStadium`, `buildPuddle`, `mergeCubeInstances`, `createTexture`
+  - mesh/texture helpers: `buildCube`, `buildPlane`, `buildSphere`, `buildCylinder`, `buildLathe`, `buildTorus`, `buildCapsule`, `buildStadium`, `buildPuddle`, `mergeCubeInstances`, `mergeMeshInstances`, `createTexture`
 
 Company sketch:
 
@@ -221,6 +222,7 @@ Architecture and development record, including the company integration path, qua
 11. Lit/water shading gained wrap lighting, fresnel rim, height fog, and clearer puddle reflections for a denser look without post-process bloom.
 12. Multi-angle puddle fix: mirrored projection uses square aspect (matching the RT) with height-based FOV; reflection UVs project from the flat mirror plane (not the dome); soft UV edge fade + stronger grazing fresnel keep side views clean.
 13. Midnight Bar scene added with lathe/cylinder/torus/capsule/stadium helpers for a denser game-style reflection stress test; scenes split into `src/scenes/` with an inspector switcher.
+14. Buildathon polish: `mergeMeshInstances` batches same-material bar props; Low preset uses cheaper mesh density; inspector pitch / Try this copy; README “What to look for”.
 
 ## Verification
 
@@ -262,7 +264,7 @@ Serve locally and open in a WebGL2 browser. Checks should include:
 - Bar props are procedural lathes/cylinders, not authored glTF assets.
 - `implementation.js` expects the host app to supply meshes, materials, and a planar water object; it does not import glTF or manage assets.
 - The procedural textures in the demo are placeholders for future captured imagery.
-- Dense scenes (~130 draws) are fine for testing but may need batching/instancing for production iGPU budgets.
+- Batched bar still uses one draw per unique material group; further GPU instancing would reduce CPU submit cost more.
 
 ## Roadmap
 

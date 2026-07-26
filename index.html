@@ -46,6 +46,8 @@
             <p class="eyebrow" id="sceneCode">SCENE / 002</p>
             <h2 id="sceneTitle">Midnight Bar</h2>
             <p class="muted" id="sceneBlurb">A denser game-style lounge: lathed bottles, curved counter, stools, pendants, and a wet floor that stresses the reflection path.</p>
+            <p class="pitch-line">Mirrored image pass — not ray tracing. One extra color render becomes the wet-floor reflection.</p>
+            <p class="try-this"><span>TRY THIS</span> <span id="tryThisNote">Orbit to the side, then lower the view — the wet floor is a mirrored image pass, not ray tracing. Toggle Bar neon, then try GPU quality → Low.</span></p>
             <label class="select-row" for="sceneSelect">
               <span><b>Active scene</b><small>Swap atrium / bar test beds</small></span>
               <select id="sceneSelect">
@@ -85,10 +87,10 @@
               <span class="toggle-ui" aria-hidden="true"></span>
             </label>
             <label class="select-row" for="qualitySelect">
-              <span><b>GPU quality</b><small>Maps, PCF taps, blur, and pixel ratio</small></span>
+              <span><b>GPU quality</b><small>Low = iGPU path; Balanced = default showcase</small></span>
               <select id="qualitySelect">
-                <option value="low">Low · 640² AA</option>
-                <option value="balanced" selected>Balanced · 1024² AA</option>
+                <option value="low">Low · iGPU / 640²</option>
+                <option value="balanced" selected>Balanced · showcase</option>
                 <option value="high">High · 1536² AA</option>
               </select>
             </label>
@@ -106,7 +108,7 @@
 
           <!-- Documentation link intentionally stays available from the demo. -->
           <footer class="inspector-footer">
-            <span>IBRT / 0.6.1</span>
+            <span>IBRT / 0.6.2</span>
             <a href="./PROJECT.md">Read project notes ↗</a>
           </footer>
         </aside>

@@ -17,10 +17,10 @@
 // Quality → mesh density
 // ---------------------------------------------------------------------------
 
-/** Map GPU quality preset to segment counts for curved meshes. */
+/** Map GPU quality preset to segment counts for curved meshes. Low is the iGPU path. */
 function detailLevel(preset) {
   const name = preset.neonDetail || "balanced";
-  if (name === "low") return { segs: 16, lathe: 14, sphere: [10, 14], torus: [18, 10], neonOval: 12 };
+  if (name === "low") return { segs: 12, lathe: 10, sphere: [8, 12], torus: [14, 8], neonOval: 10 };
   if (name === "high") return { segs: 32, lathe: 28, sphere: [16, 24], torus: [32, 16], neonOval: 22 };
   return { segs: 24, lathe: 20, sphere: [12, 18], torus: [24, 12], neonOval: 16 };
 }
@@ -324,6 +324,25 @@ function obj(mesh, position, scale, color, texture, extras = {}) {
   };
 }
 
+/**
+ * Push one draw for many transforms of the same mesh + material.
+ * Same-material bottle/stool/stemware groups collapse from N draws → 1.
+ */
+function pushMerged(ibrt, objects, sourceMesh, instances, color, texture, extras = {}) {
+  if (!instances.length) return;
+  if (instances.length === 1) {
+    const one = instances[0];
+    objects.push(obj(sourceMesh, one.position, one.scale, color, texture, {
+      rotation: one.rotation || 0,
+      rotationZ: one.rotationZ || 0,
+      ...extras,
+    }));
+    return;
+  }
+  const mesh = ibrt.mergeMeshInstances(sourceMesh, instances);
+  objects.push(obj(mesh, [0, 0, 0], [1, 1, 1], color, texture, extras));
+}
+
 // ---------------------------------------------------------------------------
 // Public scene API
 // ---------------------------------------------------------------------------
@@ -337,6 +356,7 @@ export const midnightBarMeta = {
   neonLabel: "Bar neon",
   neonHint: "BAR letter tubes and warm local glow",
   legendNote: "The wet floor puddle mirrors shelves, bottles, and the BAR neon — a denser reflection stress test than the atrium.",
+  tryThis: "Orbit to the side, then lower the view — the wet floor is a mirrored image pass, not ray tracing. Toggle Bar neon, then try GPU quality → Low.",
 };
 
 /**
@@ -380,142 +400,173 @@ export function buildMidnightBar(ibrt, preset) {
 
   objects.push(obj(meshes.cube, [0, 2.6, -5.35], [7.2, 2.6, 0.12], [0.22, 0.2, 0.24, 1], tex.velvet, { gloss: 35 }));
   objects.push(obj(meshes.cube, [0, 5.05, -1.2], [7.4, 0.12, 4.8], [0.12, 0.12, 0.14, 1], tex.dark, { cast: false, gloss: 20 }));
-  // Soft side curtains (capsules read as fabric, not boxes).
-  objects.push(obj(meshes.capsule, [-6.4, 2.4, -1.5], [0.35, 1.55, 0.35], [0.55, 0.12, 0.22, 1], tex.velvet, { gloss: 25, cast: false }));
-  objects.push(obj(meshes.capsule, [6.4, 2.4, -1.5], [0.35, 1.55, 0.35], [0.55, 0.12, 0.22, 1], tex.velvet, { gloss: 25, cast: false }));
+  pushMerged(ibrt, objects, meshes.capsule, [
+    { position: [-6.4, 2.4, -1.5], scale: [0.35, 1.55, 0.35] },
+    { position: [6.4, 2.4, -1.5], scale: [0.35, 1.55, 0.35] },
+  ], [0.55, 0.12, 0.22, 1], tex.velvet, { gloss: 25, cast: false });
 
-  // --- Back-bar shelves ----------------------------------------------------
-  for (const y of [1.55, 2.25, 2.95]) {
-    objects.push(obj(meshes.stadium, [0, y, -4.85], [2.6, 0.7, 0.55], [0.75, 0.72, 0.68, 1], tex.marble, { gloss: 95, cast: true }));
-  }
-  objects.push(obj(meshes.cylinder, [-5.2, 2.2, -4.85], [0.08, 2.4, 0.08], [0.55, 0.42, 0.28, 1], tex.brass, { gloss: 110 }));
-  objects.push(obj(meshes.cylinder, [5.2, 2.2, -4.85], [0.08, 2.4, 0.08], [0.55, 0.42, 0.28, 1], tex.brass, { gloss: 110 }));
+  // --- Back-bar shelves (3 planks → 1 draw) --------------------------------
+  pushMerged(ibrt, objects, meshes.stadium, [1.55, 2.25, 2.95].map((y) => ({
+    position: [0, y, -4.85],
+    scale: [2.6, 0.7, 0.55],
+  })), [0.75, 0.72, 0.68, 1], tex.marble, { gloss: 95 });
+  pushMerged(ibrt, objects, meshes.cylinder, [
+    { position: [-5.2, 2.2, -4.85], scale: [0.08, 2.4, 0.08] },
+    { position: [5.2, 2.2, -4.85], scale: [0.08, 2.4, 0.08] },
+  ], [0.55, 0.42, 0.28, 1], tex.brass, { gloss: 110 });
 
   // --- Curved bar counter + brass foot rail --------------------------------
   objects.push(obj(meshes.stadium, [0, 0.52, 0.35], [2.85, 1.55, 0.95], [0.42, 0.26, 0.16, 1], tex.wood, { gloss: 55 }));
   objects.push(obj(meshes.stadium, [0, 1.08, 0.35], [2.95, 0.55, 1.05], [0.82, 0.78, 0.74, 1], tex.marble, { gloss: 120 }));
   objects.push(obj(meshes.cylinder, [0, 0.28, 0.35], [2.55, 0.12, 0.72], [0.45, 0.32, 0.18, 1], tex.wood, { gloss: 40 }));
-  // Cylinders tip onto X via rotationZ so rails run along the bar face.
-  for (const x of [-3.6, -1.8, 0, 1.8, 3.6]) {
-    objects.push(obj(meshes.cylinder, [x, 0.22, 1.55], [0.045, 0.85, 0.045], [0.7, 0.55, 0.28, 1], tex.brass, {
+  // Foot-rail segments + draft-tap columns share brass cylinder material.
+  pushMerged(ibrt, objects, meshes.cylinder, [
+    ...[-3.6, -1.8, 0, 1.8, 3.6].map((x) => ({
+      position: [x, 0.22, 1.55],
+      scale: [0.045, 0.85, 0.045],
       rotationZ: Math.PI * 0.5,
-      gloss: 130,
-      cast: false,
-    }));
-  }
-  for (const x of [-4.2, -2.4, -0.6, 1.2, 3.0, 4.2]) {
-    objects.push(obj(meshes.sphere, [x, 0.22, 1.75], [0.06, 0.06, 0.06], [0.85, 0.65, 0.3, 1], tex.brass, {
-      gloss: 140,
-      cast: false,
-    }));
-  }
+    })),
+    ...[-2.6, -2.15, -1.7].map((x) => ({
+      position: [x, 1.45, -0.15],
+      scale: [0.04, 0.55, 0.04],
+    })),
+  ], [0.7, 0.55, 0.3, 1], tex.brass, { gloss: 135, cast: false });
+  pushMerged(ibrt, objects, meshes.sphere, [-4.2, -2.4, -0.6, 1.2, 3.0, 4.2].map((x) => ({
+    position: [x, 0.22, 1.75],
+    scale: [0.06, 0.06, 0.06],
+  })), [0.85, 0.65, 0.3, 1], tex.brass, { gloss: 140, cast: false });
 
-  // --- Bar stools (velvet pad + brass rings + tapered leg) -----------------
-  for (const x of [-3.2, -1.6, 0, 1.6, 3.2]) {
-    const z = 2.15;
-    objects.push(obj(meshes.seat, [x, 0.72, z], [0.38, 0.1, 0.38], [0.55, 0.12, 0.22, 1], tex.velvet, { gloss: 35 }));
-    objects.push(obj(meshes.torus, [x, 0.68, z], [0.34, 0.34, 0.34], [0.65, 0.48, 0.25, 1], tex.brass, { gloss: 120, cast: false }));
-    objects.push(obj(meshes.taper, [x, 0.36, z], [0.07, 0.62, 0.07], [0.55, 0.42, 0.25, 1], tex.brass, { gloss: 100 }));
-    objects.push(obj(meshes.torus, [x, 0.08, z], [0.22, 0.22, 0.22], [0.55, 0.4, 0.22, 1], tex.brass, { gloss: 110, cast: false }));
-    objects.push(obj(meshes.sphere, [x, 0.05, z], [0.08, 0.04, 0.08], [0.35, 0.28, 0.18, 1], tex.dark, { cast: false, gloss: 40 }));
-  }
+  // --- Bar stools: 5 parts × 5 stools → 5 draws ---------------------------
+  const stoolXs = [-3.2, -1.6, 0, 1.6, 3.2];
+  const stoolZ = 2.15;
+  pushMerged(ibrt, objects, meshes.seat, stoolXs.map((x) => ({
+    position: [x, 0.72, stoolZ], scale: [0.38, 0.1, 0.38],
+  })), [0.55, 0.12, 0.22, 1], tex.velvet, { gloss: 35 });
+  pushMerged(ibrt, objects, meshes.torus, stoolXs.map((x) => ({
+    position: [x, 0.68, stoolZ], scale: [0.34, 0.34, 0.34],
+  })), [0.65, 0.48, 0.25, 1], tex.brass, { gloss: 120, cast: false });
+  // Stool legs + cocktail-table stem share tapered brass.
+  pushMerged(ibrt, objects, meshes.taper, [
+    ...stoolXs.map((x) => ({ position: [x, 0.36, stoolZ], scale: [0.07, 0.62, 0.07] })),
+    { position: [0, 0.28, 3.4], scale: [0.08, 0.5, 0.08] },
+  ], [0.55, 0.42, 0.25, 1], tex.brass, { gloss: 100 });
+  pushMerged(ibrt, objects, meshes.torus, stoolXs.map((x) => ({
+    position: [x, 0.08, stoolZ], scale: [0.22, 0.22, 0.22],
+  })), [0.55, 0.4, 0.22, 1], tex.brass, { gloss: 110, cast: false });
+  pushMerged(ibrt, objects, meshes.sphere, stoolXs.map((x) => ({
+    position: [x, 0.05, stoolZ], scale: [0.08, 0.04, 0.08],
+  })), [0.35, 0.28, 0.18, 1], tex.dark, { cast: false, gloss: 40 });
 
-  // --- Bottle back-bar (hero curved props for the reflection pass) ---------
-  const bottleRows = [
-    { y: 1.62, items: [
-      { mesh: meshes.wine, x: -4.2, s: 0.55, color: [0.35, 0.05, 0.12, 1], tex: tex.amber },
-      { mesh: meshes.slim, x: -3.5, s: 0.5, color: [0.1, 0.25, 0.2, 1], tex: tex.glass },
-      { mesh: meshes.whiskey, x: -2.8, s: 0.52, color: [0.55, 0.28, 0.08, 1], tex: tex.amber },
-      { mesh: meshes.decanter, x: -2.0, s: 0.5, color: [0.7, 0.85, 0.9, 1], tex: tex.glass },
-      { mesh: meshes.wine, x: -1.2, s: 0.58, color: [0.2, 0.04, 0.1, 1], tex: tex.amber },
-      { mesh: meshes.slim, x: -0.4, s: 0.48, color: [0.9, 0.9, 0.85, 1], tex: tex.glass },
-      { mesh: meshes.whiskey, x: 0.4, s: 0.54, color: [0.45, 0.2, 0.05, 1], tex: tex.amber },
-      { mesh: meshes.wine, x: 1.2, s: 0.56, color: [0.15, 0.08, 0.22, 1], tex: tex.velvet },
-      { mesh: meshes.decanter, x: 2.0, s: 0.5, color: [0.85, 0.75, 0.45, 1], tex: tex.amber },
-      { mesh: meshes.slim, x: 2.8, s: 0.5, color: [0.08, 0.2, 0.28, 1], tex: tex.glass },
-      { mesh: meshes.whiskey, x: 3.5, s: 0.52, color: [0.5, 0.15, 0.08, 1], tex: tex.amber },
-      { mesh: meshes.wine, x: 4.2, s: 0.55, color: [0.3, 0.05, 0.1, 1], tex: tex.amber },
-    ]},
-    { y: 2.32, items: [
-      { mesh: meshes.slim, x: -3.8, s: 0.46, color: [0.95, 0.9, 0.7, 1], tex: tex.glass },
-      { mesh: meshes.wine, x: -3.0, s: 0.52, color: [0.4, 0.08, 0.14, 1], tex: tex.amber },
-      { mesh: meshes.shaker, x: -2.15, s: 0.48, color: [0.75, 0.78, 0.82, 1], tex: tex.brass, gloss: 140 },
-      { mesh: meshes.decanter, x: -1.3, s: 0.48, color: [0.6, 0.85, 0.8, 1], tex: tex.glass },
-      { mesh: meshes.whiskey, x: -0.4, s: 0.5, color: [0.55, 0.3, 0.1, 1], tex: tex.amber },
-      { mesh: meshes.wine, x: 0.5, s: 0.54, color: [0.18, 0.05, 0.12, 1], tex: tex.amber },
-      { mesh: meshes.slim, x: 1.35, s: 0.46, color: [0.15, 0.35, 0.25, 1], tex: tex.glass },
-      { mesh: meshes.shaker, x: 2.2, s: 0.48, color: [0.85, 0.7, 0.35, 1], tex: tex.brass, gloss: 140 },
-      { mesh: meshes.wine, x: 3.05, s: 0.52, color: [0.25, 0.06, 0.1, 1], tex: tex.amber },
-      { mesh: meshes.decanter, x: 3.9, s: 0.48, color: [0.9, 0.88, 0.8, 1], tex: tex.glass },
-    ]},
-    { y: 3.02, items: [
-      { mesh: meshes.wine, x: -3.4, s: 0.5, color: [0.35, 0.06, 0.12, 1], tex: tex.amber },
-      { mesh: meshes.slim, x: -2.5, s: 0.45, color: [0.1, 0.22, 0.3, 1], tex: tex.glass },
-      { mesh: meshes.whiskey, x: -1.55, s: 0.48, color: [0.48, 0.22, 0.08, 1], tex: tex.amber },
-      { mesh: meshes.wine, x: -0.55, s: 0.52, color: [0.22, 0.05, 0.14, 1], tex: tex.amber },
-      { mesh: meshes.decanter, x: 0.45, s: 0.46, color: [0.7, 0.9, 0.95, 1], tex: tex.glass },
-      { mesh: meshes.slim, x: 1.4, s: 0.45, color: [0.9, 0.85, 0.55, 1], tex: tex.amber },
-      { mesh: meshes.whiskey, x: 2.35, s: 0.48, color: [0.4, 0.12, 0.06, 1], tex: tex.amber },
-      { mesh: meshes.wine, x: 3.3, s: 0.5, color: [0.28, 0.05, 0.1, 1], tex: tex.amber },
-    ]},
-  ];
-
-  for (const row of bottleRows) {
-    for (const item of row.items) {
-      const h = item.s;
-      objects.push(obj(
-        item.mesh,
-        [item.x, row.y, -4.7],
-        [h, h, h],
-        item.color,
-        item.tex,
-        { gloss: item.gloss ?? 125, cast: true, receive: true },
-      ));
+  // --- Glassware / bottles: one bucket map so shelf + counter share draws ---
+  // Tight palette → fewer unique material keys → fewer draws (target ~30–40).
+  const C = {
+    redWine: [0.32, 0.06, 0.12, 1],
+    whiskey: [0.5, 0.22, 0.08, 1],
+    clear: [0.78, 0.9, 0.95, 1],
+    brass: [0.8, 0.72, 0.4, 1],
+  };
+  const meshName = (mesh) => (
+    mesh === meshes.wine ? "wine"
+      : mesh === meshes.slim ? "slim"
+        : mesh === meshes.whiskey ? "whiskey"
+          : mesh === meshes.decanter ? "decanter"
+            : mesh === meshes.shaker ? "shaker"
+              : mesh === meshes.tumbler ? "tumbler"
+                : mesh === meshes.coupe ? "coupe"
+                  : "other"
+  );
+  const texName = (t) => (
+    t === tex.amber ? "amber" : t === tex.glass ? "glass" : t === tex.brass ? "brass" : "other"
+  );
+  const propBuckets = new Map();
+  const addProp = (mesh, position, scale, color, texture, gloss, extras = {}) => {
+    const key = `${meshName(mesh)}|${texName(texture)}|${color.join(",")}|${gloss}|${extras.cast === false ? 0 : 1}|${extras.rotationZ || 0}`;
+    if (!propBuckets.has(key)) {
+      propBuckets.set(key, { mesh, tex: texture, color, gloss, extras, instances: [] });
     }
-  }
+    propBuckets.get(key).instances.push({
+      position,
+      scale,
+      rotationZ: extras.rotationZ || 0,
+    });
+  };
 
-  // --- Counter service set -------------------------------------------------
-  const service = [
-    { mesh: meshes.tumbler, p: [-1.6, 1.18, 0.55], s: 0.42, c: [0.75, 0.9, 0.95, 1], t: tex.glass, g: 140 },
-    { mesh: meshes.tumbler, p: [-1.25, 1.18, 0.7], s: 0.4, c: [0.7, 0.88, 0.92, 1], t: tex.glass, g: 140 },
-    { mesh: meshes.coupe, p: [-0.55, 1.18, 0.45], s: 0.48, c: [0.85, 0.95, 1, 1], t: tex.glass, g: 150 },
-    { mesh: meshes.shaker, p: [0.35, 1.18, 0.5], s: 0.5, c: [0.82, 0.84, 0.88, 1], t: tex.brass, g: 150 },
-    { mesh: meshes.coupe, p: [1.15, 1.18, 0.65], s: 0.46, c: [0.9, 0.95, 1, 1], t: tex.glass, g: 150 },
-    { mesh: meshes.whiskey, p: [1.9, 1.18, 0.4], s: 0.42, c: [0.55, 0.28, 0.1, 1], t: tex.amber, g: 120 },
-    { mesh: meshes.sphere, p: [0.85, 1.28, 0.95], s: 0.1, c: [1, 0.45, 0.12, 1], t: tex.amber, g: 80, e: [0.15, 0.04, 0.01] },
-    { mesh: meshes.sphere, p: [1.05, 1.26, 1.05], s: 0.08, c: [1, 0.55, 0.15, 1], t: tex.amber, g: 80 },
+  const shelfBottles = [
+    { mesh: meshes.wine, x: -4.2, y: 1.62, s: 0.55, color: C.redWine, tex: tex.amber },
+    { mesh: meshes.slim, x: -3.5, y: 1.62, s: 0.5, color: C.clear, tex: tex.glass },
+    { mesh: meshes.whiskey, x: -2.8, y: 1.62, s: 0.52, color: C.whiskey, tex: tex.amber },
+    { mesh: meshes.decanter, x: -2.0, y: 1.62, s: 0.5, color: C.clear, tex: tex.glass },
+    { mesh: meshes.wine, x: -1.2, y: 1.62, s: 0.58, color: C.redWine, tex: tex.amber },
+    { mesh: meshes.slim, x: -0.4, y: 1.62, s: 0.48, color: C.clear, tex: tex.glass },
+    { mesh: meshes.whiskey, x: 0.4, y: 1.62, s: 0.54, color: C.whiskey, tex: tex.amber },
+    { mesh: meshes.wine, x: 1.2, y: 1.62, s: 0.56, color: C.redWine, tex: tex.amber },
+    { mesh: meshes.decanter, x: 2.0, y: 1.62, s: 0.5, color: C.whiskey, tex: tex.amber },
+    { mesh: meshes.slim, x: 2.8, y: 1.62, s: 0.5, color: C.clear, tex: tex.glass },
+    { mesh: meshes.whiskey, x: 3.5, y: 1.62, s: 0.52, color: C.whiskey, tex: tex.amber },
+    { mesh: meshes.wine, x: 4.2, y: 1.62, s: 0.55, color: C.redWine, tex: tex.amber },
+    { mesh: meshes.slim, x: -3.8, y: 2.32, s: 0.46, color: C.clear, tex: tex.glass },
+    { mesh: meshes.wine, x: -3.0, y: 2.32, s: 0.52, color: C.redWine, tex: tex.amber },
+    { mesh: meshes.shaker, x: -2.15, y: 2.32, s: 0.48, color: C.brass, tex: tex.brass, gloss: 140 },
+    { mesh: meshes.decanter, x: -1.3, y: 2.32, s: 0.48, color: C.clear, tex: tex.glass },
+    { mesh: meshes.whiskey, x: -0.4, y: 2.32, s: 0.5, color: C.whiskey, tex: tex.amber },
+    { mesh: meshes.wine, x: 0.5, y: 2.32, s: 0.54, color: C.redWine, tex: tex.amber },
+    { mesh: meshes.slim, x: 1.35, y: 2.32, s: 0.46, color: C.clear, tex: tex.glass },
+    { mesh: meshes.shaker, x: 2.2, y: 2.32, s: 0.48, color: C.brass, tex: tex.brass, gloss: 140 },
+    { mesh: meshes.wine, x: 3.05, y: 2.32, s: 0.52, color: C.redWine, tex: tex.amber },
+    { mesh: meshes.decanter, x: 3.9, y: 2.32, s: 0.48, color: C.clear, tex: tex.glass },
+    { mesh: meshes.wine, x: -3.4, y: 3.02, s: 0.5, color: C.redWine, tex: tex.amber },
+    { mesh: meshes.slim, x: -2.5, y: 3.02, s: 0.45, color: C.clear, tex: tex.glass },
+    { mesh: meshes.whiskey, x: -1.55, y: 3.02, s: 0.48, color: C.whiskey, tex: tex.amber },
+    { mesh: meshes.wine, x: -0.55, y: 3.02, s: 0.52, color: C.redWine, tex: tex.amber },
+    { mesh: meshes.decanter, x: 0.45, y: 3.02, s: 0.46, color: C.clear, tex: tex.glass },
+    { mesh: meshes.slim, x: 1.4, y: 3.02, s: 0.45, color: C.whiskey, tex: tex.amber },
+    { mesh: meshes.whiskey, x: 2.35, y: 3.02, s: 0.48, color: C.whiskey, tex: tex.amber },
+    { mesh: meshes.wine, x: 3.3, y: 3.02, s: 0.5, color: C.redWine, tex: tex.amber },
   ];
-  for (const item of service) {
-    objects.push(obj(item.mesh, item.p, [item.s, item.s, item.s], item.c, item.t, {
-      gloss: item.g,
-      emissive: item.e || [0, 0, 0],
-    }));
+  for (const item of shelfBottles) {
+    addProp(item.mesh, [item.x, item.y, -4.7], [item.s, item.s, item.s], item.color, item.tex, item.gloss ?? 125);
   }
 
-  // Draft taps — column + spout + colored handle.
-  for (const x of [-2.6, -2.15, -1.7]) {
-    objects.push(obj(meshes.cylinder, [x, 1.45, -0.15], [0.04, 0.55, 0.04], [0.7, 0.55, 0.3, 1], tex.brass, { gloss: 140 }));
-    objects.push(obj(meshes.capsule, [x, 1.78, 0.05], [0.035, 0.12, 0.035], [0.75, 0.6, 0.32, 1], tex.brass, {
-      rotationZ: Math.PI * 0.5,
-      gloss: 140,
-      cast: false,
-    }));
-    objects.push(obj(meshes.sphere, [x, 1.72, -0.15], [0.07, 0.07, 0.07], [0.85, 0.2, 0.25, 1], tex.velvet, {
-      gloss: 90,
-      cast: false,
-    }));
-  }
-
-  // Stemware hanging under the top shelf (rotationZ flips coupe stem-up).
+  // Counter service joins the same buckets where mesh/material match.
+  addProp(meshes.tumbler, [-1.6, 1.18, 0.55], [0.42, 0.42, 0.42], C.clear, tex.glass, 125);
+  addProp(meshes.tumbler, [-1.25, 1.18, 0.7], [0.4, 0.4, 0.4], C.clear, tex.glass, 125);
+  addProp(meshes.coupe, [-0.55, 1.18, 0.45], [0.48, 0.48, 0.48], C.clear, tex.glass, 125);
+  addProp(meshes.coupe, [1.15, 1.18, 0.65], [0.46, 0.46, 0.46], C.clear, tex.glass, 125);
+  addProp(meshes.shaker, [0.35, 1.18, 0.5], [0.5, 0.5, 0.5], C.brass, tex.brass, 140);
+  addProp(meshes.whiskey, [1.9, 1.18, 0.4], [0.42, 0.42, 0.42], C.whiskey, tex.amber, 125);
+  addProp(meshes.coupe, [0.15, 0.6, 3.45], [0.4, 0.4, 0.4], C.clear, tex.glass, 125);
+  // Hanging stemware (flipped) — separate key via rotationZ in extras.
   for (const x of [-3.6, -2.9, -2.2, -1.5, 1.5, 2.2, 2.9, 3.6]) {
-    objects.push(obj(meshes.coupe, [x, 2.78, -4.55], [0.32, 0.32, 0.32], [0.8, 0.92, 0.98, 1], tex.glass, {
+    addProp(meshes.coupe, [x, 2.78, -4.55], [0.32, 0.32, 0.32], C.clear, tex.glass, 125, {
       rotationZ: Math.PI,
-      gloss: 150,
       cast: false,
-    }));
+    });
   }
 
-  // Glossy back-bar "mirror" slab — adds bright highlights into the puddle.
+  for (const bucket of propBuckets.values()) {
+    const { cast, receive, neon, emissive, rotationZ } = bucket.extras;
+    pushMerged(ibrt, objects, bucket.mesh, bucket.instances, bucket.color, bucket.tex, {
+      gloss: bucket.gloss,
+      cast: cast === false ? false : true,
+      receive: receive === false ? false : true,
+      neon: !!neon,
+      emissive: emissive || [0, 0, 0],
+    });
+  }
+
+  pushMerged(ibrt, objects, meshes.sphere, [
+    { position: [0.85, 1.28, 0.95], scale: [0.1, 0.1, 0.1] },
+    { position: [1.05, 1.26, 1.05], scale: [0.08, 0.08, 0.08] },
+  ], [1, 0.5, 0.14, 1], tex.amber, { gloss: 80, emissive: [0.12, 0.04, 0.01] });
+
+  // Draft-tap spouts / handles (columns already batched with the foot rail).
+  pushMerged(ibrt, objects, meshes.capsule, [-2.6, -2.15, -1.7].map((x) => ({
+    position: [x, 1.78, 0.05], scale: [0.035, 0.12, 0.035], rotationZ: Math.PI * 0.5,
+  })), [0.75, 0.6, 0.32, 1], tex.brass, { gloss: 140, cast: false });
+  pushMerged(ibrt, objects, meshes.sphere, [-2.6, -2.15, -1.7].map((x) => ({
+    position: [x, 1.72, -0.15], scale: [0.07, 0.07, 0.07],
+  })), [0.85, 0.2, 0.25, 1], tex.velvet, { gloss: 90, cast: false });
+
   objects.push(obj(meshes.cube, [0, 2.35, -5.15], [5.0, 1.55, 0.04], [0.55, 0.7, 0.78, 1], tex.glass, {
     gloss: 160,
     cast: false,
@@ -525,42 +576,48 @@ export function buildMidnightBar(ibrt, preset) {
 
   // --- Booth seating + pendants + accents ----------------------------------
   const boothZ = -1.8;
-  for (const x of [-4.6, 4.6]) {
-    objects.push(obj(meshes.capsule, [x, 0.85, boothZ], [0.95, 0.55, 0.55], [0.5, 0.1, 0.2, 1], tex.velvet, { gloss: 30 }));
-    objects.push(obj(meshes.seat, [x, 0.42, boothZ + 0.55], [0.85, 0.14, 0.55], [0.45, 0.1, 0.18, 1], tex.velvet, { gloss: 28 }));
-    objects.push(obj(meshes.cylinder, [x, 0.7, boothZ + 0.55], [0.45, 0.05, 0.45], [0.55, 0.42, 0.25, 1], tex.brass, { gloss: 100, cast: false }));
-  }
+  pushMerged(ibrt, objects, meshes.capsule, [
+    { position: [-4.6, 0.85, boothZ], scale: [0.95, 0.55, 0.55] },
+    { position: [4.6, 0.85, boothZ], scale: [0.95, 0.55, 0.55] },
+  ], [0.5, 0.1, 0.2, 1], tex.velvet, { gloss: 30 });
+  pushMerged(ibrt, objects, meshes.seat, [
+    { position: [-4.6, 0.42, boothZ + 0.55], scale: [0.85, 0.14, 0.55] },
+    { position: [4.6, 0.42, boothZ + 0.55], scale: [0.85, 0.14, 0.55] },
+  ], [0.45, 0.1, 0.18, 1], tex.velvet, { gloss: 28 });
+  // Booth brass discs + planter bases share one cylinder batch.
+  pushMerged(ibrt, objects, meshes.cylinder, [
+    { position: [-4.6, 0.7, boothZ + 0.55], scale: [0.45, 0.05, 0.45] },
+    { position: [4.6, 0.7, boothZ + 0.55], scale: [0.45, 0.05, 0.45] },
+    { position: [-5.2, 0.12, 2.8], scale: [0.35, 0.2, 0.35] },
+    { position: [5.2, 0.12, 2.8], scale: [0.35, 0.2, 0.35] },
+  ], [0.55, 0.42, 0.25, 1], tex.brass, { gloss: 100, cast: false });
 
-  // Pendant lights also tagged neon so the inspector toggle dims the lounge glow.
-  for (const x of [-2.4, 0, 2.4]) {
-    objects.push(obj(meshes.cylinder, [x, 4.2, 0.2], [0.02, 1.4, 0.02], [0.2, 0.2, 0.22, 1], tex.dark, { cast: false, gloss: 40 }));
-    objects.push(obj(meshes.sphere, [x, 3.35, 0.2], [0.22, 0.22, 0.22], [1, 0.85, 0.55, 1], tex.amber, {
-      emissive: [0.55, 0.32, 0.08],
-      cast: true,
-      gloss: 100,
-      neon: true,
-    }));
-    objects.push(obj(meshes.taper, [x, 3.55, 0.2], [0.18, 0.16, 0.18], [0.55, 0.42, 0.22, 1], tex.brass, {
-      gloss: 120,
-      cast: false,
-      neon: true,
-    }));
-  }
+  // Pendants tagged neon so the inspector toggle dims lounge glow.
+  pushMerged(ibrt, objects, meshes.cylinder, [-2.4, 0, 2.4].map((x) => ({
+    position: [x, 4.2, 0.2], scale: [0.02, 1.4, 0.02],
+  })), [0.2, 0.2, 0.22, 1], tex.dark, { cast: false, gloss: 40 });
+  pushMerged(ibrt, objects, meshes.sphere, [-2.4, 0, 2.4].map((x) => ({
+    position: [x, 3.35, 0.2], scale: [0.22, 0.22, 0.22],
+  })), [1, 0.85, 0.55, 1], tex.amber, {
+    emissive: [0.55, 0.32, 0.08],
+    cast: true,
+    gloss: 100,
+    neon: true,
+  });
+  pushMerged(ibrt, objects, meshes.taper, [-2.4, 0, 2.4].map((x) => ({
+    position: [x, 3.55, 0.2], scale: [0.18, 0.16, 0.18],
+  })), [0.55, 0.42, 0.22, 1], tex.brass, { gloss: 120, cast: false, neon: true });
 
-  objects.push(obj(meshes.sphere, [-5.2, 0.55, 2.8], [0.45, 0.45, 0.45], [0.2, 0.55, 0.45, 1], tex.glass, {
-    emissive: [0.02, 0.08, 0.06],
-    gloss: 110,
-  }));
-  objects.push(obj(meshes.sphere, [5.2, 0.55, 2.8], [0.45, 0.45, 0.45], [0.55, 0.2, 0.45, 1], tex.velvet, {
-    emissive: [0.08, 0.02, 0.06],
-    gloss: 90,
-  }));
-  objects.push(obj(meshes.cylinder, [-5.2, 0.12, 2.8], [0.35, 0.2, 0.35], [0.4, 0.3, 0.18, 1], tex.brass, { gloss: 100 }));
-  objects.push(obj(meshes.cylinder, [5.2, 0.12, 2.8], [0.35, 0.2, 0.35], [0.4, 0.3, 0.18, 1], tex.brass, { gloss: 100 }));
+  // Corner orbs — single tinted batch (same emissive strength).
+  pushMerged(ibrt, objects, meshes.sphere, [
+    { position: [-5.2, 0.55, 2.8], scale: [0.45, 0.45, 0.45] },
+    { position: [5.2, 0.55, 2.8], scale: [0.45, 0.45, 0.45] },
+  ], [0.35, 0.4, 0.45, 1], tex.glass, {
+    emissive: [0.04, 0.05, 0.06],
+    gloss: 100,
+  });
 
   objects.push(obj(meshes.cylinder, [0, 0.55, 3.4], [0.55, 0.06, 0.55], [0.7, 0.55, 0.3, 1], tex.brass, { gloss: 130 }));
-  objects.push(obj(meshes.taper, [0, 0.28, 3.4], [0.08, 0.5, 0.08], [0.55, 0.42, 0.25, 1], tex.brass, { gloss: 110 }));
-  objects.push(obj(meshes.coupe, [0.15, 0.6, 3.45], [0.4, 0.4, 0.4], [0.85, 0.95, 1, 1], tex.glass, { gloss: 150 }));
 
   objects.push(...buildBarNeon(ibrt, tex, detail));
 

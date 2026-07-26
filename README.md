@@ -36,7 +36,7 @@ A denser game-style lounge for stressing the reflection path:
 - Curved stadium bar counter, brass foot rail, velvet stools with torus rings
 - Pendant globes, draft taps, hanging stemware, back-bar mirror
 - Pink/cyan **BAR** neon + wet-floor puddle that mirrors shelves and signage
-- ~130 opaque draws + shadow/reflection passes; holds interactive frame rates
+- Same-material props batched with `mergeMeshInstances` (~40 draws vs ~130 unbatched)
 
 ### Neon Atrium — SCENE / 001
 
@@ -66,6 +66,20 @@ python3 -m http.server 8080
 ```
 
 Open [http://localhost:8080](http://localhost:8080) in a WebGL2-capable browser.
+
+---
+
+## What to look for
+
+Judges / first-time viewers — about 30 seconds:
+
+1. **Default scene is Midnight Bar.** Orbit to the side, then lower the camera (grazing). The wet floor should still show the BAR neon and bottle shelves.
+2. **That puddle is not ray tracing.** It is one mirrored color pass sampled by the water material (MSAA + mips). The inspector pitch line states this up front.
+3. **Toggle Bar neon** — tubes, pendants, and the local pink light drop out of the reflection with them.
+4. **Switch GPU quality → Low** — the iGPU path (smaller maps, fewer mesh segments). The scene should stay interactive.
+5. **Optional:** switch Active scene → Neon Atrium for the cheap baseline (~dozen draws).
+
+The portable method lives in one file: [`src/implementation.js`](./src/implementation.js).
 
 ---
 
@@ -107,7 +121,7 @@ ibrt.renderFrame({
 });
 ```
 
-Mesh helpers available on the factory (and as named exports): `buildCube`, `buildPlane`, `buildSphere`, `buildCylinder`, `buildLathe`, `buildTorus`, `buildCapsule`, `buildStadium`, `buildPuddle`, `mergeCubeInstances`, `createTexture`.
+Mesh helpers available on the factory (and as named exports): `buildCube`, `buildPlane`, `buildSphere`, `buildCylinder`, `buildLathe`, `buildTorus`, `buildCapsule`, `buildStadium`, `buildPuddle`, `mergeCubeInstances`, `mergeMeshInstances`, `createTexture`.
 
 ### Quality presets (lower-end first)
 

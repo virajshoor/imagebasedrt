@@ -121,14 +121,22 @@ async function main() {
 
     // Toggle live and confirm regen mode.
     await page.click("#bakedToggle");
-    await new Promise((r) => setTimeout(r, 500));
+    await page.waitForFunction(() => {
+      const ibrt = window.IBRT;
+      return ibrt.renderer.reflectionMode === "live"
+        && document.querySelector("#cellReadout")?.textContent === "WEBGL2";
+    }, { timeout: 5000 });
     state = await readState();
     results.push({ step: "bar-live", ...state });
     await shot("02-bar-live-balanced.png");
 
     // Back to baked.
     await page.click("#bakedToggle");
-    await new Promise((r) => setTimeout(r, 500));
+    await page.waitForFunction(() => {
+      const ibrt = window.IBRT;
+      return ibrt.renderer.reflectionMode === "baked"
+        && document.querySelector("#cellReadout")?.textContent === "BAKED";
+    }, { timeout: 5000 });
     state = await readState();
     results.push({ step: "bar-baked-again", ...state });
 
@@ -158,7 +166,14 @@ async function main() {
     await shot("05-atrium-baked-balanced.png");
 
     await page.select("#qualitySelect", "high");
-    await new Promise((r) => setTimeout(r, 1000));
+    await page.waitForFunction(() => {
+      const ibrt = window.IBRT;
+      return ibrt.state.shadowQuality === "high"
+        && ibrt.renderer.reflectionMode === "baked"
+        && ibrt.renderer.getBakedReflection()?.size === 1536
+        && document.querySelector("#cellReadout")?.textContent === "BAKED"
+        && document.querySelector("#blendReadout")?.textContent === "1536px";
+    }, { timeout: 8000 });
     state = await readState();
     results.push({ step: "atrium-baked-high", ...state });
     await shot("06-atrium-baked-high.png");

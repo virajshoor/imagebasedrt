@@ -275,10 +275,29 @@ async function applyBakedReflection() {
   return true;
 }
 
+/** Push renderer / reflection telemetry immediately (avoid 8-frame lag after bake toggles). */
+function updateTelemetry(stats = null) {
+  const baked = stats?.bakedReflection ?? (ibrt.reflectionMode === "baked");
+  const reflectionSize = stats?.reflectionSize ?? ibrt.reflectionTarget?.size ?? 0;
+  const shadowSize = stats?.shadowSize ?? ibrt.shadowTarget?.size ?? 0;
+  const quality = stats?.quality ?? ibrt.quality;
+  el.renderer.textContent = baked ? "BAKED" : "WEBGL2";
+  el.shadow.textContent = `${reflectionSize}px`;
+  el.draws.textContent = `${enabledDrawCount} + 2`;
+  el.frame.textContent = `${Math.round(fps)} FPS`;
+  el.shadow.title = baked
+    ? `Baked reflection ${reflectionSize}px (${quality}) — not regenerating`
+    : `Live reflection ${reflectionSize}px / shadow ${shadowSize}px (${quality})`;
+  el.draws.title = baked
+    ? "Scene draws plus shadow pass (reflection image loaded from assets/baked)"
+    : "Scene draws plus shadow and reflection passes";
+}
+
 async function syncBakedMode() {
   if (!state.useBaked) {
     ibrt.clearBakedReflection();
     setBakeStatus("Live — regenerates reflection each frame (GPU VRAM only)");
+    updateTelemetry();
     return;
   }
   const ok = await applyBakedReflection();
@@ -291,6 +310,7 @@ async function syncBakedMode() {
     ibrt.clearBakedReflection();
     setBakeStatus("No bake for this scene/quality — run node scripts/bake-images.mjs");
   }
+  updateTelemetry();
 }
 
 function dataUrlToUint8Array(dataUrl) {
@@ -423,18 +443,7 @@ function renderScene(now) {
   const stats = ibrt.renderFrame(frame);
 
   telemetryTick += 1;
-  if (telemetryTick % 8 === 0) {
-    el.renderer.textContent = stats.bakedReflection ? "BAKED" : "WEBGL2";
-    el.shadow.textContent = `${stats.reflectionSize}px`;
-    el.draws.textContent = `${enabledDrawCount} + 2`;
-    el.frame.textContent = `${Math.round(fps)} FPS`;
-    el.shadow.title = stats.bakedReflection
-      ? `Baked reflection ${stats.reflectionSize}px (${stats.quality}) — not regenerating`
-      : `Live reflection ${stats.reflectionSize}px / shadow ${stats.shadowSize}px (${stats.quality})`;
-    el.draws.title = stats.bakedReflection
-      ? "Scene draws plus shadow pass (reflection image loaded from assets/baked)"
-      : "Scene draws plus shadow and reflection passes";
-  }
+  if (telemetryTick % 8 === 0) updateTelemetry(stats);
 }
 
 function resize() {

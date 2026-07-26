@@ -10,9 +10,10 @@ The prototype has moved from an initial 2D view-cell experiment to a stable WebG
 
 - A portable method module (`src/implementation.js`) that companies can drop into their own WebGL2 apps.
 - A demo shell (`src/main.js`) with scene switching, orbit/WASD controls, and inspector UI.
-- **Midnight Bar** (`src/scenes/midnightBar.js`): lathed bottles, stadium bar counter, stools, pendants, draft taps, BAR neon, wet-floor puddle; same-material batches via `mergeMeshInstances` (~40 draws).
+- **Midnight Bar** (`src/scenes/midnightBar.js`, IBRT **0.6.4**): lathed bottles, stadium bar counter, stools, pendants, draft taps, booths, BAR neon, wet-floor puddle; same-material batches via `mergeMeshInstances` (~42 draws).
 - **Neon Atrium** (`src/scenes/neonAtrium.js`): lighter Buildathon atrium with letterform NEON and a feathered puddle.
 - Curved mesh helpers: cylinder, lathe, torus, capsule, stadium (plus cube / plane / sphere / puddle) and `mergeMeshInstances` for batched props.
+- BAR neon bowls are wall-facing elliptical tubes (`makeMesh`); stems are merged cylinders — not hatched box ovals.
 - Inspector pitch + “Try this” tips so judges understand the method without reading the README.
 - Interactive orbit camera, zoom, WASD/arrow movement, and camera bounds per scene.
 - A dynamic key light that can be moved with `Q` / `E`.
@@ -144,11 +145,11 @@ scene meshes
 
 | Quality | Shadow | Reflection | PCF | Water blur | Max DPR | Refresh |
 | --- | ---: | ---: | --- | --- | ---: | --- |
-| Low | 256px | 640px · 2× MSAA | 1-tap | soft + mips | 1.0 | Shadow every 2 frames when still |
-| Balanced | 512px | 1024px · 4× MSAA | 4-tap diagonal | soft + mips | 1.0 | Every frame |
+| Low · iGPU | 256px | 640px · 2× MSAA | 1-tap | soft + mips | 1.0 | Shadow every 2 frames when still |
+| Balanced · showcase | 512px | 1024px · 4× MSAA | 4-tap diagonal | mild soft + mips | 1.0 | Every frame |
 | High | 1024px | 1536px · 4× MSAA | 3x3 | soft + mips | 1.5 | Every frame |
 
-Reflection images are rendered with MSAA, resolved into a mipmapped texture, then sampled with a multi-tap LOD-biased kernel so neon edges stay smooth in the puddle instead of stair-stepping.
+Reflection images are rendered with MSAA, resolved into a mipmapped texture, then sampled with a multi-tap LOD-biased kernel. Balanced keeps a milder blur/LOD so BAR neon stays readable in the puddle while still hiding stair-steps.
 
 Additional lower-end choices in the implementation:
 
@@ -166,7 +167,12 @@ The puddle is a multi-ring elliptical disc. Vertex UV.x stores radial distance. 
 
 ### Neon signs
 
-Demo-only geometry in the scene modules: readable tube strokes mounted on a dark housing. Stroke/oval density follows the active quality preset. A local colored light contributes to lit surfaces and the water glint; the letters themselves appear in the mirrored reflection image.
+Demo-only geometry in the scene modules, mounted on a dark housing:
+
+- **Neon Atrium** — letterform **NEON** from merged cube strokes (quality-scaled oval density).
+- **Midnight Bar** — **BAR** from merged cylinder stems + smooth wall-facing elliptical tube bowls (`appendWallEllipseTube` → `makeMesh`). Ring segment counts follow the quality preset (`neonRing`).
+
+A local colored light contributes to lit surfaces and the water glint; the letters themselves appear in the mirrored reflection image.
 
 ### Midnight Bar props
 
@@ -176,10 +182,11 @@ Non-blocky assets are authored as:
 | --- | --- |
 | `buildLathe` | Wine / whiskey / decanter / tumbler / coupe / shaker bottles |
 | `buildStadium` | Curved bar counter and shelf planks |
-| `buildCylinder` / taper | Legs, uprights, foot-rail segments, pendant cables |
+| `buildCylinder` / taper | Legs, uprights, foot-rail segments, pendant cables, neon stems |
 | `buildTorus` | Stool seat rings and foot rings |
 | `buildCapsule` | Booth backs, curtains, tap spouts |
-| `buildSphere` | Pendant globes, citrus, rail connectors |
+| `buildSphere` | Pendant globes, citrus, rail connectors, corner orbs |
+| `makeMesh` (ellipse tubes) | Smooth B / R neon bowls on the back wall |
 
 ## Source map
 
@@ -223,6 +230,7 @@ Architecture and development record, including the company integration path, qua
 12. Multi-angle puddle fix: mirrored projection uses square aspect (matching the RT) with height-based FOV; reflection UVs project from the flat mirror plane (not the dome); soft UV edge fade + stronger grazing fresnel keep side views clean.
 13. Midnight Bar scene added with lathe/cylinder/torus/capsule/stadium helpers for a denser game-style reflection stress test; scenes split into `src/scenes/` with an inspector switcher.
 14. Buildathon polish: `mergeMeshInstances` batches same-material bar props; Low preset uses cheaper mesh density; inspector pitch / Try this copy; README “What to look for”.
+15. Visual QA (0.6.4): stronger puddle `reflectAmount` + milder balanced water blur/LOD; BAR neon rebuilt as cylinder stems + elliptical tube bowls; default camera reframed so the wet floor reads at a glance; bottles seated on shelf tops; booth brass trim corrected.
 
 ## Verification
 
@@ -237,10 +245,11 @@ Serve locally and open in a WebGL2 browser. Checks should include:
 
 - No page/console errors; WebGL `getError() === 0`.
 - `window.IBRT.renderer` exists and exposes `renderFrame` / `setQuality`.
-- Default scene is Midnight Bar; switching to Neon Atrium updates inspector copy.
-- Quality switch rebuilds targets (high → 1536px reflection).
-- Side / grazing orbits still show puddle neon without severe shear.
-- Module imports succeed over HTTP.
+- Default scene is Midnight Bar (~42 + 2 draws); switching to Neon Atrium updates inspector copy (~12 + 2).
+- Quality switch rebuilds targets (high → 1536px reflection); Low keeps interactive FPS on iGPU.
+- Side / grazing orbits still show puddle neon / stools without severe shear.
+- Neon toggle drops BAR tubes + local pink light (and their reflection contribution).
+- Module imports succeed over HTTP; `window.IBRT.version` reports `0.6.4`.
 
 ## Lower-end GPU considerations
 
@@ -260,7 +269,7 @@ Serve locally and open in a WebGL2 browser. Checks should include:
 - There is no physically correct ray tracing, refraction, global illumination, or multi-bounce reflection.
 - The reflection is a single mirrored color image. Objects outside the mirrored camera's capture can disappear from the puddle; soft edge fade blends those regions into water tint.
 - The water surface is a procedural dome plus soft undulation; it is not a fluid simulation.
-- Neon letters are assembled from box strokes rather than true bent glass tubes.
+- Neon letters are procedural tubes (cylinders + elliptical rings / cube strokes), not true bent glass tubes or emissive textures.
 - Bar props are procedural lathes/cylinders, not authored glTF assets.
 - `implementation.js` expects the host app to supply meshes, materials, and a planar water object; it does not import glTF or manage assets.
 - The procedural textures in the demo are placeholders for future captured imagery.

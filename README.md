@@ -34,9 +34,9 @@ A denser game-style lounge for stressing the reflection path:
 
 - Lathed bottles, tumblers, coupes, and shakers (solids of revolution — not cubes)
 - Curved stadium bar counter, brass foot rail, velvet stools with torus rings
-- Pendant globes, draft taps, hanging stemware, back-bar mirror
-- Pink/cyan **BAR** neon + wet-floor puddle that mirrors shelves and signage
-- Same-material props batched with `mergeMeshInstances` (~40 draws vs ~130 unbatched)
+- Pendant globes, draft taps, booth seating, back-bar shelves
+- Pink/cyan **BAR** neon (cylinder stems + smooth elliptical tube bowls) + wet-floor puddle
+- Same-material props batched with `mergeMeshInstances` (~42 draws vs ~130 unbatched)
 
 ### Neon Atrium — SCENE / 001
 
@@ -127,11 +127,11 @@ Mesh helpers available on the factory (and as named exports): `buildCube`, `buil
 
 | Preset | Shadow | Reflection | PCF | Water blur | Max DPR |
 | --- | ---: | ---: | --- | --- | ---: |
-| Low | 256px | 640px · 2× MSAA | 1-tap | soft + mips | 1.0 |
-| Balanced | 512px | 1024px · 4× MSAA | 4-tap | soft + mips | 1.0 |
+| Low · iGPU | 256px | 640px · 2× MSAA | 1-tap | soft + mips | 1.0 |
+| Balanced · showcase | 512px | 1024px · 4× MSAA | 4-tap | mild soft + mips | 1.0 |
 | High | 1024px | 1536px · 4× MSAA | 3×3 | soft + mips | 1.5 |
 
-Neon strokes are merged into a few batched meshes. The mirror pass uses MSAA + mipmaps and a multi-tap sample so puddle neon stays smooth instead of pixelated.
+Neon letters batch into a few draws (housing cubes, cylinder stems, elliptical bowls). The mirror pass uses MSAA + mipmaps and a multi-tap sample so puddle neon stays readable instead of stair-stepped.
 
 ---
 

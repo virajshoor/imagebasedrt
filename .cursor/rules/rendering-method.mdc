@@ -1,0 +1,37 @@
+---
+description: Guardrails for the Image Based RT rendering method — preserve the technique and quality; only optimize.
+alwaysApply: true
+---
+
+# Rendering method guardrails
+
+These constraints protect the core value of this project (`Image Based RT`): a specific
+image-based, mirrored-camera reflection technique. Follow them for any change touching
+rendering (`src/implementation.js`, `src/main.js`, `src/scenes/*`, shaders, or the demo).
+
+## Do not change the inherent method
+- Do **not** replace, rewrite, or fundamentally alter the ray-tracing-like reflection
+  method (depth shadow pass → mirrored-camera reflection image → water/mirror composite).
+- The reflection must remain a **per-frame mirrored render**, not a substitute algorithm.
+- Preserve the public API and pipeline stages in `src/implementation.js`.
+
+## Only optimization changes are allowed
+- Permitted changes are those that make the existing method **faster / cheaper** while
+  producing the **same or better** visual result (e.g. batching, culling, cheaper math,
+  target reuse, memory savings, quality-preset tuning).
+- Do **not** introduce feature changes that trade away the method for performance.
+
+## No permanently baked images
+- Do **not** bake the reflection/scene into a static image that is captured once and reused
+  indefinitely. Permanently pre-baked/frozen images conflict with the interactive,
+  view-dependent quality of the original method and are **not allowed**.
+- Temporal reuse that already exists (skipping/refreshing shadow & reflection targets when
+  the view is stable, with dirty keys for light pose, neon intensity, and `contentVersion`)
+  is fine — it is bounded reuse, not a permanent bake.
+
+## Keep quality high
+- Visual quality must not regress. Reflections, shadows, and the water composite should look
+  as good as or better than before any change.
+- If an optimization would reduce fidelity, gate it behind the appropriate quality preset
+  (low / balanced / high) rather than degrading the default experience.
+- Verify changes visually in a WebGL2 browser (see `AGENTS.md` and `PROJECT.md`).

@@ -36,7 +36,7 @@ A denser game-style lounge for stressing the reflection path:
 - Curved stadium bar counter, brass foot rail, velvet stools with torus rings
 - Pendant globes, draft taps, booth seating, back-bar shelves
 - Pink/cyan **BAR** neon (angled A + cylinder stems + elliptical bowls) + wet-floor puddle
-- Clear glass bottles with inner liquid cores; floor-contact AO plants stools and bar legs
+- Clear glass bottles with fake-glass fresnel (`reflectivity`) + inner liquid cores; floor-contact AO plants stools and bar legs
 - Same-material props batched with `mergeMeshInstances` (~45 draws vs ~130 unbatched)
 
 ### Neon Atrium — SCENE / 001
@@ -44,7 +44,7 @@ A denser game-style lounge for stressing the reflection path:
 The original lighter Buildathon demo:
 
 - Soft quality-scaled PCF shadows from a depth map
-- Letterform **NEON** sign (batched emissive tubes + local colored light)
+- Letterform **NEON** sign (cylinder stems + smooth ellipse-tube **O** + local colored light)
 - Round feathered puddle reflecting the atrium
 - Low draw-call proxy geometry for a cheap baseline
 
@@ -75,10 +75,10 @@ Open [http://localhost:8080](http://localhost:8080) in a WebGL2-capable browser.
 Judges / first-time viewers — about 30 seconds:
 
 1. **Default scene is Midnight Bar.** Orbit to the side, then lower the camera (grazing). The wet floor should still show the BAR neon and bottle shelves.
-2. **That puddle is not ray tracing.** It is one mirrored color pass sampled by the water material (MSAA + mips). The inspector pitch line states this up front.
+2. **That puddle is not ray tracing.** It is one mirrored color pass sampled by the water material (MSAA + mips). The inspector pitch line states this up front. Reflections stay live — not a permanent bake.
 3. **Toggle Bar neon** — tubes, pendants, and the local pink light drop out of the reflection with them.
 4. **Switch GPU quality → Low** — the iGPU path (smaller maps, fewer mesh segments). The scene should stay interactive.
-5. **Optional:** switch Active scene → Neon Atrium for the cheap baseline (~dozen draws).
+5. **Optional:** switch Active scene → Neon Atrium for the cheap baseline (~dozen draws). The **O** should read as a smooth tube, not faceted cubes; clear bar bottles read glassier via fresnel.
 
 The portable method lives in one file: [`src/implementation.js`](./src/implementation.js).
 
@@ -113,7 +113,11 @@ python3 -m http.server 8080
 See [`examples/minimal/main.js`](./examples/minimal/main.js).
 
 ```js
-import { createImageBasedRT, recommendContextOptions } from "./implementation.js";
+import {
+  createImageBasedRT,
+  recommendContextOptions,
+  DEFAULT_ATMOSPHERE,
+} from "./implementation.js";
 
 const gl = canvas.getContext("webgl2", recommendContextOptions("low"));
 const ibrt = createImageBasedRT(gl, { quality: "low" });
@@ -122,19 +126,24 @@ ibrt.renderFrame({
   canvas,
   camera,
   light,
-  localLight,
+  localLight,           // colored local light (demo neon)
   objects,
-  floorObject,
+  floorObject,          // same reference as the floor entry in objects
   water,
   time: performance.now() / 1000,
   aspect: width / height,
-  contentVersion, // bump when neon/objects toggle
+  contentVersion,       // bump when neon/objects toggle
+  lightColor,           // optional key-light tint
+  atmosphere: DEFAULT_ATMOSPHERE, // optional fog / ambient / contact AO
 });
+
+// Tear down when the host unloads:
+ibrt.dispose();
 ```
 
-Mesh helpers available on the factory (and as named exports): `buildCube`, `buildPlane`, `buildSphere`, `buildCylinder`, `buildLathe`, `buildTorus`, `buildCapsule`, `buildStadium`, `buildPuddle`, `mergeCubeInstances`, `mergeMeshInstances`, `createTexture`.
+Mesh helpers available on the factory (and as named exports): `buildCube`, `buildPlane`, `buildSphere`, `buildCylinder`, `buildLathe`, `buildTorus`, `buildCapsule`, `buildStadium`, `buildPuddle`, `buildWallEllipseTube`, `appendWallEllipseTube`, `mergeCubeInstances`, `mergeMeshInstances`, `createTexture`, `disposeMesh` / `disposeMeshes` / `dispose`.
 
-Lit surfaces get a cheap height-based contact AO near the floor so props read planted without an extra pass.
+Lit surfaces get a cheap height-based contact AO near the floor so props read planted without an extra pass. Optional object `reflectivity` (0–1) boosts Fresnel for fake glass without an alpha pipeline. See the host contract comments in [`examples/minimal/main.js`](./examples/minimal/main.js).
 
 ### Quality presets (lower-end first)
 
@@ -154,6 +163,7 @@ Neon letters batch into a few draws (housing cubes, cylinder stems, elliptical b
 imagebasedrt/
 ├── index.html                 Demo shell + controls
 ├── styles.css                 Lab UI
+├── LICENSE                    MIT
 ├── PROJECT.md                 Architecture & iteration notes
 ├── README.md                  You are here
 ├── examples/
@@ -189,4 +199,4 @@ Created during **Cursor Buildathon Delhi** as an exploration of practical, image
 
 ## License
 
-Open source — use it, fork it, adapt the method into your stack. If you ship something cool with it, star the repo or open an issue with what you learned.
+[MIT](./LICENSE) — use it, fork it, adapt the method into your stack. If you ship something cool with it, star the repo or open an issue with what you learned.

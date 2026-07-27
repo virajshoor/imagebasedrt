@@ -198,46 +198,9 @@ function pushTubeHoriz(list, x, y, z, length, radius) {
   pushTube(list, [x, y, z], length, radius, Math.PI * 0.5);
 }
 
-/** Append a wall-facing elliptical neon tube (ring in the XY plane) into mesh buffers. */
-function appendWallEllipseTube(vertices, indices, cx, cy, cz, radiusX, radiusY, tube, radialSegs, tubeSegs) {
-  const base = vertices.length / 8;
-  for (let i = 0; i <= radialSegs; i += 1) {
-    const v = i / radialSegs;
-    const phi = v * Math.PI * 2;
-    const cosPhi = Math.cos(phi);
-    const sinPhi = Math.sin(phi);
-    const centerX = cx + cosPhi * radiusX;
-    const centerY = cy + sinPhi * radiusY;
-    const tx = -sinPhi * radiusX;
-    const ty = cosPhi * radiusY;
-    const tLen = Math.hypot(tx, ty) || 1;
-    const tangentX = tx / tLen;
-    const tangentY = ty / tLen;
-    // In-plane normal (rotate tangent 90°) so the tube stays round on the wall.
-    const normalX = -tangentY;
-    const normalY = tangentX;
-    for (let j = 0; j <= tubeSegs; j += 1) {
-      const u = j / tubeSegs;
-      const theta = u * Math.PI * 2;
-      const cosTheta = Math.cos(theta);
-      const sinTheta = Math.sin(theta);
-      const px = centerX + normalX * tube * cosTheta;
-      const py = centerY + normalY * tube * cosTheta;
-      const pz = cz + tube * sinTheta;
-      const nx = normalX * cosTheta;
-      const ny = normalY * cosTheta;
-      const nz = sinTheta;
-      const inv = 1 / (Math.hypot(nx, ny, nz) || 1);
-      vertices.push(px, py, pz, nx * inv, ny * inv, nz * inv, u, v);
-    }
-  }
-  for (let i = 0; i < radialSegs; i += 1) {
-    for (let j = 0; j < tubeSegs; j += 1) {
-      const a = base + i * (tubeSegs + 1) + j;
-      const b = a + tubeSegs + 1;
-      indices.push(a, b, a + 1, a + 1, b, b + 1);
-    }
-  }
+/** Append a wall-facing elliptical neon tube — delegates to portable implementation helper. */
+function appendWallEllipseTube(ibrt, vertices, indices, cx, cy, cz, radiusX, radiusY, tube, radialSegs, tubeSegs) {
+  ibrt.appendWallEllipseTube(vertices, indices, cx, cy, cz, radiusX, radiusY, tube, radialSegs, tubeSegs);
 }
 
 /**
@@ -263,8 +226,8 @@ function buildBarNeon(ibrt, tex, detail) {
   pushTubeVert(pinkStems, -1.55, y, z, 0.96, tube);
   const pinkRingVerts = [];
   const pinkRingIdx = [];
-  appendWallEllipseTube(pinkRingVerts, pinkRingIdx, -1.2, y + 0.22, z, 0.3, 0.22, tube, ringSegs, tubeSegs);
-  appendWallEllipseTube(pinkRingVerts, pinkRingIdx, -1.18, y - 0.22, z, 0.34, 0.24, tube, ringSegs, tubeSegs);
+  appendWallEllipseTube(ibrt, pinkRingVerts, pinkRingIdx, -1.2, y + 0.22, z, 0.3, 0.22, tube, ringSegs, tubeSegs);
+  appendWallEllipseTube(ibrt, pinkRingVerts, pinkRingIdx, -1.18, y - 0.22, z, 0.34, 0.24, tube, ringSegs, tubeSegs);
 
   // Letter A — apex + angled legs + crossbar (cyan; matches B/R tube quality).
   const aApexX = -0.15;
@@ -283,11 +246,11 @@ function buildBarNeon(ibrt, tex, detail) {
   // Small apex ring so the peak reads as a continuous neon joint.
   const cyanRingVerts = [];
   const cyanRingIdx = [];
-  appendWallEllipseTube(cyanRingVerts, cyanRingIdx, aApexX, aApexY - 0.02, z, 0.1, 0.08, tube * 0.9, Math.max(12, (ringSegs / 2) | 0), tubeSegs);
+  appendWallEllipseTube(ibrt, cyanRingVerts, cyanRingIdx, aApexX, aApexY - 0.02, z, 0.1, 0.08, tube * 0.9, Math.max(12, (ringSegs / 2) | 0), tubeSegs);
 
   // Letter R — stem + bowl + diagonal leg.
   pushTubeVert(pinkStems, 0.75, y, z, 0.96, tube);
-  appendWallEllipseTube(pinkRingVerts, pinkRingIdx, 1.12, y + 0.18, z, 0.32, 0.26, tube, ringSegs, tubeSegs);
+  appendWallEllipseTube(ibrt, pinkRingVerts, pinkRingIdx, 1.12, y + 0.18, z, 0.32, 0.26, tube, ringSegs, tubeSegs);
   pushTube(pinkStems, [1.24, y - 0.28, z], 0.68, tube, 0.55);
 
   const neonMat = (mesh, color, emissive) => ({
@@ -535,7 +498,8 @@ export function buildMidnightBar(ibrt, preset) {
   );
   const propBuckets = new Map();
   const addProp = (mesh, position, scale, color, texture, gloss, extras = {}) => {
-    const key = `${meshName(mesh)}|${texName(texture)}|${color.join(",")}|${gloss}|${extras.cast === false ? 0 : 1}|${extras.rotationZ || 0}`;
+    const reflectivity = extras.reflectivity || 0;
+    const key = `${meshName(mesh)}|${texName(texture)}|${color.join(",")}|${gloss}|${extras.cast === false ? 0 : 1}|${extras.rotationZ || 0}|${reflectivity}`;
     if (!propBuckets.has(key)) {
       propBuckets.set(key, { mesh, tex: texture, color, gloss, extras, instances: [] });
     }
@@ -593,7 +557,16 @@ export function buildMidnightBar(ibrt, preset) {
   };
 
   for (const item of shelfBottles) {
-    addProp(item.mesh, [item.x, item.y, -4.68], [item.s, item.s, item.s], item.color, item.tex, item.gloss ?? 125);
+    const glassExtras = item.tex === tex.glass ? { reflectivity: 0.55 } : {};
+    addProp(
+      item.mesh,
+      [item.x, item.y, -4.68],
+      [item.s, item.s, item.s],
+      item.color,
+      item.tex,
+      item.gloss ?? 125,
+      glassExtras,
+    );
     // Clear glass bottles get an inner fill so they read as liquid in the puddle.
     if (item.tex === tex.glass) {
       pushLiquid(item.x, item.y, -4.68, item.s, item.x < 0 ? "wine" : "whiskey");
@@ -601,23 +574,24 @@ export function buildMidnightBar(ibrt, preset) {
   }
 
   // Counter service joins the same buckets where mesh/material match.
-  addProp(meshes.tumbler, [-1.6, 1.18, 0.55], [0.42, 0.42, 0.42], C.clear, tex.glass, 125);
-  addProp(meshes.tumbler, [-1.25, 1.18, 0.7], [0.4, 0.4, 0.4], C.clear, tex.glass, 125);
-  addProp(meshes.coupe, [-0.55, 1.18, 0.45], [0.48, 0.48, 0.48], C.clear, tex.glass, 125);
-  addProp(meshes.coupe, [1.15, 1.18, 0.65], [0.46, 0.46, 0.46], C.clear, tex.glass, 125);
+  addProp(meshes.tumbler, [-1.6, 1.18, 0.55], [0.42, 0.42, 0.42], C.clear, tex.glass, 125, { reflectivity: 0.5 });
+  addProp(meshes.tumbler, [-1.25, 1.18, 0.7], [0.4, 0.4, 0.4], C.clear, tex.glass, 125, { reflectivity: 0.5 });
+  addProp(meshes.coupe, [-0.55, 1.18, 0.45], [0.48, 0.48, 0.48], C.clear, tex.glass, 125, { reflectivity: 0.5 });
+  addProp(meshes.coupe, [1.15, 1.18, 0.65], [0.46, 0.46, 0.46], C.clear, tex.glass, 125, { reflectivity: 0.5 });
   addProp(meshes.shaker, [0.35, 1.18, 0.5], [0.5, 0.5, 0.5], C.brass, tex.brass, 140);
   addProp(meshes.whiskey, [1.9, 1.18, 0.4], [0.42, 0.42, 0.42], C.whiskey, tex.amber, 125);
-  addProp(meshes.coupe, [0.15, 0.6, 3.45], [0.4, 0.4, 0.4], C.clear, tex.glass, 125);
+  addProp(meshes.coupe, [0.15, 0.6, 3.45], [0.4, 0.4, 0.4], C.clear, tex.glass, 125, { reflectivity: 0.5 });
   pushLiquid(-1.6, 1.18, 0.55, 0.42, "whiskey");
   pushLiquid(-1.25, 1.18, 0.7, 0.4, "whiskey");
   for (const bucket of propBuckets.values()) {
-    const { cast, receive, neon, emissive, rotationZ } = bucket.extras;
+    const { cast, receive, neon, emissive, rotationZ, reflectivity } = bucket.extras;
     pushMerged(ibrt, objects, bucket.mesh, bucket.instances, bucket.color, bucket.tex, {
       gloss: bucket.gloss,
       cast: cast === false ? false : true,
       receive: receive === false ? false : true,
       neon: !!neon,
       emissive: emissive || [0, 0, 0],
+      reflectivity: reflectivity || 0,
     });
   }
   if (liquidWine.length) {

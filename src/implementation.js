@@ -23,10 +23,25 @@
  *   ibrt.setQuality("low");                 // cheaper maps / fewer taps
  *   ibrt.allocateTargets();
  *   // each frame (bump contentVersion when neon/objects toggle so temporal reuse stays fresh):
- *   ibrt.renderFrame({ canvas, camera, light, localLight, objects, floorObject, water, time, contentVersion, ... });
+ *   ibrt.renderFrame({
+ *     canvas, camera, light, localLight, objects, floorObject, water, time, contentVersion,
+ *     lightColor, atmosphere, // optional; defaults match the demo look
+ *   });
+ *   // tear down: ibrt.dispose() (also disposeMesh per rebuilt scene mesh)
  *
+ * Reflections stay a live mirrored-camera render — never a permanent bake.
  * No framework, no bundler, no external assets required.
  */
+
+/** Default lit-pass atmosphere; omit `atmosphere` on renderFrame to keep this look. */
+export const DEFAULT_ATMOSPHERE = {
+  fogStart: 4.0,
+  fogEnd: 16.0,
+  fogColor: [0.02, 0.045, 0.07],
+  fogStrength: 0.55,
+  ambient: [0.08, 0.12, 0.16],
+  contactAO: 1.0,
+};
 
 // ---------------------------------------------------------------------------
 // Quality presets tuned for integrated / lower-end GPUs
@@ -45,6 +60,7 @@ export const QUALITY_PRESETS = {
     puddleSegments: 40,
     puddleRings: 3,
     neonDetail: "low",
+    neonRing: [16, 6],    // [radialSegs, tubeSegs] for wall ellipse neon tubes
     antialias: false,
     shadowInterval: 2,    // reuse shadow map on alternate frames when still
     reflectionInterval: 1,
@@ -61,6 +77,7 @@ export const QUALITY_PRESETS = {
     puddleSegments: 56,
     puddleRings: 4,
     neonDetail: "balanced",
+    neonRing: [28, 8],
     antialias: true,      // smooth neon / sphere edges in the main view
     shadowInterval: 1,
     reflectionInterval: 1,
@@ -77,6 +94,7 @@ export const QUALITY_PRESETS = {
     puddleSegments: 80,
     puddleRings: 5,
     neonDetail: "high",
+    neonRing: [36, 10],
     antialias: true,
     shadowInterval: 1,
     reflectionInterval: 1,
@@ -235,6 +253,8 @@ uniform vec3 uNeonPosition;
 uniform vec3 uNeonColor;
 uniform vec3 uCameraPosition;
 uniform vec3 uEmissive;
+uniform vec3 uAmbient;
+uniform vec3 uFogColor;
 uniform float uShadowStrength;
 uniform float uNeonIntensity;
 uniform float uTextureEnabled;
@@ -243,6 +263,11 @@ uniform float uGloss;
 uniform float uShadowTexel;
 uniform float uPcfMode;
 uniform float uClipBelowY;
+uniform float uReflectivity;
+uniform float uFogStart;
+uniform float uFogEnd;
+uniform float uFogStrength;
+uniform float uContactAO;
 out vec4 outColor;
 
 float sampleShadow(vec3 shadowCoord, float bias, vec2 offset) {
@@ -292,29 +317,33 @@ void main() {
   float wrap = max(dot(normal, toLight) * 0.85 + 0.15, 0.0);
   float shadow = shadowAmount(normal, toLight) * uReceiveShadow * uShadowStrength;
   vec3 halfVector = normalize(toLight + toCamera);
-  float specular = pow(max(dot(normal, halfVector), 0.0), uGloss) * 0.28;
+  float reflectivity = clamp(uReflectivity, 0.0, 1.0);
+  float specular = pow(max(dot(normal, halfVector), 0.0), uGloss) * mix(0.28, 0.42, reflectivity);
   float fresnel = pow(1.0 - max(dot(normal, toCamera), 0.0), 3.0);
+  // Local colored light (demo neon / host localLight) — uNeon* names kept for shader stability.
   vec3 toNeon = normalize(uNeonPosition - vWorldPosition);
   float distanceToNeon = length(uNeonPosition - vWorldPosition);
   float neonAttenuation = uNeonIntensity / (1.0 + distanceToNeon * distanceToNeon * 0.16);
   float neonDiffuse = max(dot(normal, toNeon), 0.0);
   float neonSpecular = pow(max(dot(normal, normalize(toNeon + toCamera)), 0.0), 48.0) * 0.34;
-  vec3 ambient = vec3(0.08, 0.12, 0.16);
-  vec3 lit = albedo * (ambient + uLightColor * wrap * attenuation * (1.0 - shadow));
+  vec3 lit = albedo * (uAmbient + uLightColor * wrap * attenuation * (1.0 - shadow));
   lit += albedo * uNeonColor * neonDiffuse * neonAttenuation;
   lit += uLightColor * specular * (1.0 - shadow * 0.45);
   lit += uNeonColor * neonSpecular * neonAttenuation;
   lit += uEmissive;
-  lit += albedo * vec3(0.04, 0.08, 0.1) * fresnel;
+  lit += albedo * vec3(0.04, 0.08, 0.1) * fresnel * mix(1.0, 2.6, reflectivity);
+  // Fake glass: stronger rim + cool highlight without alpha sorting or env bakes.
+  lit += vec3(0.72, 0.86, 0.95) * pow(fresnel, 2.0) * reflectivity * 0.45;
+  lit += albedo * vec3(0.35, 0.55, 0.65) * fresnel * reflectivity * 0.35;
   // Cheap floor-contact AO: darken near y≈0 on upright faces so props plant.
   // Upward floor faces (normal.y ~ 1) stay largely unaffected.
   float contactHeight = mix(0.56, 1.0, smoothstep(0.02, 0.52, vWorldPosition.y));
   float uprightFace = 1.0 - smoothstep(0.35, 0.9, abs(normal.y));
-  float contactAO = mix(1.0, contactHeight, uprightFace * uReceiveShadow);
+  float contactAO = mix(1.0, contactHeight, uprightFace * uReceiveShadow * uContactAO);
   lit *= contactAO;
-  // Cheap height fog for depth and atmosphere.
-  float fog = smoothstep(4.0, 16.0, length(uCameraPosition - vWorldPosition));
-  lit = mix(lit, vec3(0.02, 0.045, 0.07), fog * 0.55);
+  // Cheap height fog for depth and atmosphere (host-tunable via atmosphere.*).
+  float fog = smoothstep(uFogStart, uFogEnd, length(uCameraPosition - vWorldPosition));
+  lit = mix(lit, uFogColor, fog * uFogStrength);
   lit = lit / (lit + vec3(0.85));
   lit = pow(lit, vec3(0.92));
   outColor = vec4(lit, uBaseColor.a);
@@ -535,7 +564,100 @@ export function makeMesh(gl, vertices, indices) {
   gl.enableVertexAttribArray(2);
   gl.vertexAttribPointer(2, 2, gl.FLOAT, false, stride, 6 * Float32Array.BYTES_PER_ELEMENT);
   gl.bindVertexArray(null);
-  return { vao, count: indexData.length, vertices: vertexData, indices: indexData };
+  return {
+    vao,
+    vertexBuffer,
+    indexBuffer,
+    count: indexData.length,
+    vertices: vertexData,
+    indices: indexData,
+  };
+}
+
+/** Free GPU buffers for a mesh from makeMesh / builders / merges. */
+export function disposeMesh(gl, mesh) {
+  if (!gl || !mesh || mesh._disposed) return;
+  mesh._disposed = true;
+  if (mesh.vao) gl.deleteVertexArray(mesh.vao);
+  if (mesh.vertexBuffer) gl.deleteBuffer(mesh.vertexBuffer);
+  if (mesh.indexBuffer) gl.deleteBuffer(mesh.indexBuffer);
+  mesh.vao = null;
+  mesh.vertexBuffer = null;
+  mesh.indexBuffer = null;
+}
+
+/**
+ * Append a wall-facing elliptical neon tube (ring in the XY plane) into mesh buffers.
+ * Vertex layout matches makeMesh: position(3) + normal(3) + uv(2).
+ */
+export function appendWallEllipseTube(
+  vertices,
+  indices,
+  cx,
+  cy,
+  cz,
+  radiusX,
+  radiusY,
+  tube,
+  radialSegs,
+  tubeSegs,
+) {
+  const base = vertices.length / 8;
+  for (let i = 0; i <= radialSegs; i += 1) {
+    const v = i / radialSegs;
+    const phi = v * Math.PI * 2;
+    const cosPhi = Math.cos(phi);
+    const sinPhi = Math.sin(phi);
+    const centerX = cx + cosPhi * radiusX;
+    const centerY = cy + sinPhi * radiusY;
+    const tx = -sinPhi * radiusX;
+    const ty = cosPhi * radiusY;
+    const tLen = Math.hypot(tx, ty) || 1;
+    const tangentX = tx / tLen;
+    const tangentY = ty / tLen;
+    // In-plane normal (rotate tangent 90°) so the tube stays round on the wall.
+    const normalX = -tangentY;
+    const normalY = tangentX;
+    for (let j = 0; j <= tubeSegs; j += 1) {
+      const u = j / tubeSegs;
+      const theta = u * Math.PI * 2;
+      const cosTheta = Math.cos(theta);
+      const sinTheta = Math.sin(theta);
+      const px = centerX + normalX * tube * cosTheta;
+      const py = centerY + normalY * tube * cosTheta;
+      const pz = cz + tube * sinTheta;
+      const nx = normalX * cosTheta;
+      const ny = normalY * cosTheta;
+      const nz = sinTheta;
+      const inv = 1 / (Math.hypot(nx, ny, nz) || 1);
+      vertices.push(px, py, pz, nx * inv, ny * inv, nz * inv, u, v);
+    }
+  }
+  for (let i = 0; i < radialSegs; i += 1) {
+    for (let j = 0; j < tubeSegs; j += 1) {
+      const a = base + i * (tubeSegs + 1) + j;
+      const b = a + tubeSegs + 1;
+      indices.push(a, b, a + 1, a + 1, b, b + 1);
+    }
+  }
+}
+
+/** Build a single wall-facing elliptical neon tube mesh. */
+export function buildWallEllipseTube(
+  gl,
+  cx,
+  cy,
+  cz,
+  radiusX,
+  radiusY,
+  tube,
+  radialSegs = 28,
+  tubeSegs = 8,
+) {
+  const vertices = [];
+  const indices = [];
+  appendWallEllipseTube(vertices, indices, cx, cy, cz, radiusX, radiusY, tube, radialSegs, tubeSegs);
+  return makeMesh(gl, vertices, indices);
 }
 
 export function buildCube(gl) {
@@ -1022,10 +1144,23 @@ export function createImageBasedRT(gl, options = {}) {
   let preset = { ...QUALITY_PRESETS[qualityName] };
   let shadowTarget = null;
   let reflectionTarget = null;
+  let disposed = false;
+  const trackedMeshes = new Set();
+  const trackedTextures = new Set();
 
   const renderProgram = createProgram(gl, litVertexShader(), litFragmentShader());
   const depthProgram = createProgram(gl, depthVertexShader(), depthFragmentShader());
   const waterProgram = createProgram(gl, waterVertexShader(), waterFragmentShader());
+
+  function trackMesh(mesh) {
+    if (mesh) trackedMeshes.add(mesh);
+    return mesh;
+  }
+
+  function trackTexture(texture) {
+    if (texture) trackedTextures.add(texture);
+    return texture;
+  }
 
   const renderUniforms = {
     model: gl.getUniformLocation(renderProgram, "uModel"),
@@ -1036,10 +1171,13 @@ export function createImageBasedRT(gl, options = {}) {
     baseColor: gl.getUniformLocation(renderProgram, "uBaseColor"),
     lightPosition: gl.getUniformLocation(renderProgram, "uLightPosition"),
     lightColor: gl.getUniformLocation(renderProgram, "uLightColor"),
+    // Host API is localLight; GLSL keeps uNeon* for stable shader symbols.
     neonPosition: gl.getUniformLocation(renderProgram, "uNeonPosition"),
     neonColor: gl.getUniformLocation(renderProgram, "uNeonColor"),
     cameraPosition: gl.getUniformLocation(renderProgram, "uCameraPosition"),
     emissive: gl.getUniformLocation(renderProgram, "uEmissive"),
+    ambient: gl.getUniformLocation(renderProgram, "uAmbient"),
+    fogColor: gl.getUniformLocation(renderProgram, "uFogColor"),
     shadowStrength: gl.getUniformLocation(renderProgram, "uShadowStrength"),
     neonIntensity: gl.getUniformLocation(renderProgram, "uNeonIntensity"),
     textureEnabled: gl.getUniformLocation(renderProgram, "uTextureEnabled"),
@@ -1048,6 +1186,11 @@ export function createImageBasedRT(gl, options = {}) {
     shadowTexel: gl.getUniformLocation(renderProgram, "uShadowTexel"),
     pcfMode: gl.getUniformLocation(renderProgram, "uPcfMode"),
     clipBelowY: gl.getUniformLocation(renderProgram, "uClipBelowY"),
+    reflectivity: gl.getUniformLocation(renderProgram, "uReflectivity"),
+    fogStart: gl.getUniformLocation(renderProgram, "uFogStart"),
+    fogEnd: gl.getUniformLocation(renderProgram, "uFogEnd"),
+    fogStrength: gl.getUniformLocation(renderProgram, "uFogStrength"),
+    contactAO: gl.getUniformLocation(renderProgram, "uContactAO"),
   };
 
   const depthUniforms = {
@@ -1264,6 +1407,7 @@ export function createImageBasedRT(gl, options = {}) {
     gl.uniform3fv(uniforms.emissive, object.emissive || [0, 0, 0]);
     gl.uniform1f(uniforms.receiveShadow, object.receive ? 1 : 0);
     gl.uniform1f(uniforms.gloss, object.gloss || 48);
+    gl.uniform1f(uniforms.reflectivity, object.reflectivity || 0);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, object.texture);
     gl.uniform1i(uniforms.texture, 0);
@@ -1301,8 +1445,16 @@ export function createImageBasedRT(gl, options = {}) {
     debugMarker,
     clearColor = [0.028, 0.055, 0.075, 1],
     lightColor = [1.0, 0.76, 0.58],
+    atmosphere = DEFAULT_ATMOSPHERE,
     clipBelowY = null,
   }) {
+    const fogStart = atmosphere.fogStart ?? DEFAULT_ATMOSPHERE.fogStart;
+    const fogEnd = atmosphere.fogEnd ?? DEFAULT_ATMOSPHERE.fogEnd;
+    const fogColor = atmosphere.fogColor || DEFAULT_ATMOSPHERE.fogColor;
+    const fogStrength = atmosphere.fogStrength ?? DEFAULT_ATMOSPHERE.fogStrength;
+    const ambient = atmosphere.ambient || DEFAULT_ATMOSPHERE.ambient;
+    const contactAO = atmosphere.contactAO ?? DEFAULT_ATMOSPHERE.contactAO;
+
     gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
     if (framebuffer) {
       gl.viewport(0, 0, reflectionTarget.size, reflectionTarget.size);
@@ -1323,6 +1475,12 @@ export function createImageBasedRT(gl, options = {}) {
     gl.uniform3fv(renderUniforms.neonColor, localLight.color);
     gl.uniform1f(renderUniforms.neonIntensity, localLight.intensity);
     gl.uniform3fv(renderUniforms.cameraPosition, camera.cameraPosition);
+    gl.uniform3fv(renderUniforms.ambient, ambient);
+    gl.uniform3fv(renderUniforms.fogColor, fogColor);
+    gl.uniform1f(renderUniforms.fogStart, fogStart);
+    gl.uniform1f(renderUniforms.fogEnd, fogEnd);
+    gl.uniform1f(renderUniforms.fogStrength, fogStrength);
+    gl.uniform1f(renderUniforms.contactAO, contactAO);
     gl.uniform1f(renderUniforms.shadowStrength, preset.shadowStrength);
     gl.uniform1f(renderUniforms.textureEnabled, textureEnabled ? 1 : 0);
     gl.uniform1f(renderUniforms.shadowTexel, 1 / shadowTarget.size);
@@ -1394,6 +1552,7 @@ export function createImageBasedRT(gl, options = {}) {
    *
    * Host may pass `contentVersion` (bump on neon/object toggles) so temporal reuse
    * does not keep a stale map after the scene composition changes.
+   * Optional `lightColor` and `atmosphere` tune the lit pass without changing the method.
    */
   function renderFrame(frame) {
     const {
@@ -1410,18 +1569,31 @@ export function createImageBasedRT(gl, options = {}) {
       aspect,
       clearColor = [0.018, 0.04, 0.06, 1],
       contentVersion = 0,
+      lightColor = [1.0, 0.76, 0.58],
+      atmosphere = null,
     } = frame;
+
+    const atmos = {
+      ...DEFAULT_ATMOSPHERE,
+      ...(atmosphere || {}),
+      fogColor: atmosphere?.fogColor || DEFAULT_ATMOSPHERE.fogColor,
+      ambient: atmosphere?.ambient || DEFAULT_ATMOSPHERE.ambient,
+    };
 
     frameIndex += 1;
     const reflectionCamera = buildMirroredCamera(camera, camera.target || [0, 0, 0], aspect, water?.planeY ?? 0);
     const enabledObjects = objects;
     const lookAt = light.lookAt || [0, 0, 0];
+    const localPos = localLight.position || [0, 0, 0];
+    const localCol = localLight.color || [1, 1, 1];
 
-    // Include full light pose, neon intensity, and host contentVersion so toggles
-    // (e.g. Bar neon off) invalidate temporal shadow/reflection reuse immediately.
+    // Include full key light pose, local-light pose/color/intensity, and contentVersion
+    // so host toggles invalidate temporal reuse immediately (still interval reuse, not a bake).
     const shadowKey = [
       light.lightPosition.map((v) => v.toFixed(2)).join(","),
       lookAt.map((v) => v.toFixed(2)).join(","),
+      localPos.map((v) => v.toFixed(2)).join(","),
+      localCol.map((v) => v.toFixed(2)).join(","),
       localLight.intensity.toFixed(2),
       contentVersion,
     ].join("|");
@@ -1430,6 +1602,8 @@ export function createImageBasedRT(gl, options = {}) {
       camera.cameraPosition[1].toFixed(2),
       camera.cameraPosition[2].toFixed(2),
       (camera.target || [0, 0, 0]).map((v) => v.toFixed(2)).join(","),
+      localPos.map((v) => v.toFixed(2)).join(","),
+      localCol.map((v) => v.toFixed(2)).join(","),
       localLight.intensity.toFixed(2),
       textureEnabled ? 1 : 0,
       contentVersion,
@@ -1459,6 +1633,8 @@ export function createImageBasedRT(gl, options = {}) {
         textureEnabled,
         debugMarker: null,
         clearColor,
+        lightColor,
+        atmosphere: atmos,
         clipBelowY: planeY + 0.02,
       });
       resolveReflection();
@@ -1478,6 +1654,8 @@ export function createImageBasedRT(gl, options = {}) {
       textureEnabled,
       debugMarker,
       clearColor,
+      lightColor,
+      atmosphere: atmos,
     });
     drawWater({
       canvas,
@@ -1500,6 +1678,49 @@ export function createImageBasedRT(gl, options = {}) {
     };
   }
 
+  function disposeTargets() {
+    if (shadowTarget) {
+      gl.deleteFramebuffer(shadowTarget.framebuffer);
+      gl.deleteTexture(shadowTarget.texture);
+      shadowTarget = null;
+    }
+    if (reflectionTarget) {
+      gl.deleteFramebuffer(reflectionTarget.framebuffer);
+      if (reflectionTarget.resolveFramebuffer && reflectionTarget.resolveFramebuffer !== reflectionTarget.framebuffer) {
+        gl.deleteFramebuffer(reflectionTarget.resolveFramebuffer);
+      }
+      gl.deleteTexture(reflectionTarget.texture);
+      if (reflectionTarget.depthBuffer) gl.deleteRenderbuffer(reflectionTarget.depthBuffer);
+      if (reflectionTarget.msColor) gl.deleteRenderbuffer(reflectionTarget.msColor);
+      if (reflectionTarget.msDepth) gl.deleteRenderbuffer(reflectionTarget.msDepth);
+      reflectionTarget = null;
+    }
+  }
+
+  function disposeMeshTracked(mesh) {
+    if (!mesh) return;
+    trackedMeshes.delete(mesh);
+    disposeMesh(gl, mesh);
+  }
+
+  /** Dispose every mesh created through this factory (not textures / targets / programs). */
+  function disposeMeshes() {
+    trackedMeshes.forEach((mesh) => disposeMesh(gl, mesh));
+    trackedMeshes.clear();
+  }
+
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    disposeTargets();
+    disposeMeshes();
+    trackedTextures.forEach((texture) => gl.deleteTexture(texture));
+    trackedTextures.clear();
+    gl.deleteProgram(renderProgram);
+    gl.deleteProgram(depthProgram);
+    gl.deleteProgram(waterProgram);
+  }
+
   allocateTargets();
 
   return {
@@ -1514,21 +1735,29 @@ export function createImageBasedRT(gl, options = {}) {
     buildMirroredCamera,
     buildOrthoLight,
     renderFrame,
-    makeMesh: (vertices, indices) => makeMesh(gl, vertices, indices),
-    buildCube: () => buildCube(gl),
-    buildPlane: () => buildPlane(gl),
-    buildSphere: (rings, segments) => buildSphere(gl, rings, segments),
+    dispose,
+    disposeMesh: disposeMeshTracked,
+    disposeMeshes,
+    makeMesh: (vertices, indices) => trackMesh(makeMesh(gl, vertices, indices)),
+    buildCube: () => trackMesh(buildCube(gl)),
+    buildPlane: () => trackMesh(buildPlane(gl)),
+    buildSphere: (rings, segments) => trackMesh(buildSphere(gl, rings, segments)),
     buildCylinder: (segments, heightSegments, radiusTop, radiusBottom, capped) =>
-      buildCylinder(gl, segments, heightSegments, radiusTop, radiusBottom, capped),
-    buildLathe: (profile, segments) => buildLathe(gl, profile, segments),
+      trackMesh(buildCylinder(gl, segments, heightSegments, radiusTop, radiusBottom, capped)),
+    buildLathe: (profile, segments) => trackMesh(buildLathe(gl, profile, segments)),
     buildTorus: (radialSegments, tubularSegments, radius, tube) =>
-      buildTorus(gl, radialSegments, tubularSegments, radius, tube),
-    buildCapsule: (rings, segments) => buildCapsule(gl, rings, segments),
-    buildStadium: (segments, length, width, height) => buildStadium(gl, segments, length, width, height),
-    buildPuddle: (segments, rings) => buildPuddle(gl, segments ?? preset.puddleSegments, rings ?? preset.puddleRings),
-    mergeCubeInstances: (instances) => mergeCubeInstances(gl, instances),
-    mergeMeshInstances: (sourceMesh, instances) => mergeMeshInstances(gl, sourceMesh, instances),
-    createTexture: (draw, size) => createTexture(gl, draw, size),
+      trackMesh(buildTorus(gl, radialSegments, tubularSegments, radius, tube)),
+    buildCapsule: (rings, segments) => trackMesh(buildCapsule(gl, rings, segments)),
+    buildStadium: (segments, length, width, height) =>
+      trackMesh(buildStadium(gl, segments, length, width, height)),
+    buildPuddle: (segments, rings) =>
+      trackMesh(buildPuddle(gl, segments ?? preset.puddleSegments, rings ?? preset.puddleRings)),
+    buildWallEllipseTube: (cx, cy, cz, radiusX, radiusY, tube, radialSegs, tubeSegs) =>
+      trackMesh(buildWallEllipseTube(gl, cx, cy, cz, radiusX, radiusY, tube, radialSegs, tubeSegs)),
+    appendWallEllipseTube,
+    mergeCubeInstances: (instances) => trackMesh(mergeCubeInstances(gl, instances)),
+    mergeMeshInstances: (sourceMesh, instances) => trackMesh(mergeMeshInstances(gl, sourceMesh, instances)),
+    createTexture: (draw, size) => trackTexture(createTexture(gl, draw, size)),
     makeModel,
     clamp,
   };

@@ -11,21 +11,22 @@ The prototype has moved from an initial 2D view-cell experiment to a stable WebG
 - A portable method module (`src/implementation.js`) that companies can drop into their own WebGL2 apps.
 - A **minimal host example** at `examples/minimal/` that imports only `implementation.js`.
 - A demo shell (`src/main.js`) with scene switching, orbit/WASD controls, and inspector UI.
-- **Midnight Bar** (`src/scenes/midnightBar.js`, IBRT **0.7.0**): lathed bottles with liquid cores, stadium bar, stools, pendants, draft taps, booths, BAR neon, wet-floor puddle; batches via `mergeMeshInstances` (~45 draws).
-- **Neon Atrium** (`src/scenes/neonAtrium.js`): lighter Buildathon atrium with letterform NEON and a feathered puddle.
-- Curved mesh helpers: cylinder, lathe, torus, capsule, stadium (plus cube / plane / sphere / puddle) and `mergeMeshInstances` for batched props.
-- BAR neon: angled cyan **A**, pink B/R stems, wall-facing elliptical tube bowls (`makeMesh`).
+- **Midnight Bar** (`src/scenes/midnightBar.js`, IBRT **0.8.0**): lathed bottles with liquid cores + fake-glass fresnel, stadium bar, stools, pendants, draft taps, booths, BAR neon, wet-floor puddle; batches via `mergeMeshInstances` (~45 draws).
+- **Neon Atrium** (`src/scenes/neonAtrium.js`): lighter Buildathon atrium with cylinder + ellipse-tube **NEON** and a feathered puddle.
+- Curved mesh helpers: cylinder, lathe, torus, capsule, stadium, wall ellipse tube (plus cube / plane / sphere / puddle) and `mergeMeshInstances` for batched props.
+- BAR / atrium neon: shared `appendWallEllipseTube` / `buildWallEllipseTube`; pink/cyan stems + smooth bowls.
+- Host API knobs: `lightColor`, `atmosphere` (`DEFAULT_ATMOSPHERE`), object `reflectivity`, `dispose` / `disposeMeshes`.
 - Inspector pitch + “Try this” tips so judges understand the method without reading the README.
 - Interactive orbit camera, zoom, WASD/arrow movement, and camera bounds per scene.
 - A dynamic key light that can be moved with `Q` / `E`.
 - Quality-scaled soft shadows (1-tap, 4-tap diagonal, or 3x3 PCF) from a depth map.
 - MSAA + mipmapped reflection images with multi-tap LOD-biased water sampling.
 - Small procedural image textures (cached across quality switches).
-- Atmosphere helpers in the lit pass: wrap lighting, fresnel rim, cheap height fog, floor-contact AO.
+- Atmosphere helpers in the lit pass: wrap lighting, fresnel rim, cheap height fog, floor-contact AO (host-tunable).
 - Adjustable GPU quality presets for lower-end / integrated GPUs.
 - A debug light marker and runtime telemetry panel.
 
-This is not literal ray tracing. It is rasterized WebGL2 with image-assisted materials and an image-based reflection pass. The reflected scene is reused as a texture instead of being reached by tracing secondary rays.
+This is not literal ray tracing. It is rasterized WebGL2 with image-assisted materials and an image-based reflection pass. The reflected scene is a **live mirrored-camera render** each frame (with bounded temporal reuse) — never a permanent bake.
 
 ## Run locally
 
@@ -79,18 +80,18 @@ This is the file companies should copy first. It replaces classic secondary-ray 
 
 Public entry points:
 
-- `QUALITY_PRESETS` — low / balanced / high budgets for iGPUs.
+- `QUALITY_PRESETS` / `DEFAULT_ATMOSPHERE` — low / balanced / high budgets; lit-pass fog defaults.
 - `recommendContextOptions(quality)` — low-power WebGL2 context hints.
 - `createImageBasedRT(gl, { quality })` — factory returning the renderer API:
-  - `setQuality(name)`, `allocateTargets()`
+  - `setQuality(name)`, `allocateTargets()`, `dispose()`, `disposeMesh(mesh)`, `disposeMeshes()`
   - `buildOrbitCamera(...)`, `buildMirroredCamera(...)`, `buildOrthoLight(...)`
-  - `renderFrame({ canvas, camera, light, localLight, objects, water, ... })`
-  - mesh/texture helpers: `buildCube`, `buildPlane`, `buildSphere`, `buildCylinder`, `buildLathe`, `buildTorus`, `buildCapsule`, `buildStadium`, `buildPuddle`, `mergeCubeInstances`, `mergeMeshInstances`, `createTexture`
+  - `renderFrame({ canvas, camera, light, localLight, objects, water, lightColor?, atmosphere?, contentVersion, ... })`
+  - mesh/texture helpers: `buildCube`, `buildPlane`, `buildSphere`, `buildCylinder`, `buildLathe`, `buildTorus`, `buildCapsule`, `buildStadium`, `buildPuddle`, `buildWallEllipseTube`, `appendWallEllipseTube`, `mergeCubeInstances`, `mergeMeshInstances`, `createTexture`
 
 Company sketch:
 
 ```js
-import { createImageBasedRT, recommendContextOptions } from "./implementation.js";
+import { createImageBasedRT, recommendContextOptions, DEFAULT_ATMOSPHERE } from "./implementation.js";
 
 const gl = canvas.getContext("webgl2", recommendContextOptions("low"));
 const ibrt = createImageBasedRT(gl, { quality: "low" });
@@ -106,8 +107,13 @@ ibrt.renderFrame({
   water,
   time: performance.now() / 1000,
   aspect: width / height,
+  contentVersion,
+  lightColor: [1.0, 0.76, 0.58],
+  atmosphere: DEFAULT_ATMOSPHERE,
 });
 ```
+
+Optional object field `reflectivity` (0–1) boosts Fresnel in the lit pass for fake glass (still opaque; no alpha sort). Dirty keys for temporal shadow/reflection reuse include full key-light pose, local-light position/color/intensity, and `contentVersion`.
 
 ### `src/main.js` (demo shell)
 
@@ -170,7 +176,7 @@ The puddle is a multi-ring elliptical disc. Vertex UV.x stores radial distance. 
 
 Demo-only geometry in the scene modules, mounted on a dark housing:
 
-- **Neon Atrium** — letterform **NEON** from merged cube strokes (quality-scaled oval density).
+- **Neon Atrium** — letterform **NEON** from cylinder stems + wall-facing elliptical tube **O** (quality-scaled `neonRing`).
 - **Midnight Bar** — **BAR** from angled cyan A legs, pink B/R stems, and smooth wall-facing elliptical tube bowls (`appendWallEllipseTube` → `makeMesh`). Ring segment counts follow the quality preset (`neonRing`).
 
 A local colored light contributes to lit surfaces and the water glint; the letters themselves appear in the mirrored reflection image.
@@ -188,7 +194,8 @@ Non-blocky assets are authored as:
 | `buildCapsule` | Booth backs, curtains, tap spouts |
 | `buildSphere` | Pendant globes, citrus, rail connectors, corner orbs |
 | `buildLathe` (`liquid`) | Inner wine / whiskey fills for clear glass bottles |
-| `makeMesh` (ellipse tubes) | Smooth B / R neon bowls + A apex ring on the back wall |
+| `makeMesh` / `appendWallEllipseTube` | Smooth B / R neon bowls + A apex ring; atrium O |
+| object `reflectivity` | Fake-glass Fresnel boost on clear bottle shells |
 
 ## Source map
 
@@ -235,6 +242,7 @@ Architecture and development record, including the company integration path, qua
 15. Visual QA (0.6.4): stronger puddle `reflectAmount` + milder balanced water blur/LOD; BAR neon rebuilt as cylinder stems + elliptical tube bowls; default camera reframed so the wet floor reads at a glance; bottles seated on shelf tops; booth brass trim corrected.
 16. Reliability polish (0.6.5): Low water path is true 5-tap; shadow/reflection dirty keys include neon + `contentVersion`; freeze UV warp when reusing reflection RT; shell title/comments drop “View Cell Lab”; remove unused footRail torus mesh.
 17. Portable showcase (0.7.0): `examples/minimal/` drop-in host; lit-pass floor-contact AO; BAR letter A angled tubes + apex ring; clear-glass liquid cores; docs sync.
+18. API + visual polish (0.8.0): shared ellipse-tube helper; atrium NEON cylinders + smooth O; `dispose`/`disposeMeshes`; `lightColor` + `atmosphere` on `renderFrame`; fuller local-light dirty keys; fake-glass `reflectivity`; MIT LICENSE; minimal host contract.
 
 ## Verification
 
@@ -249,14 +257,15 @@ node --check examples/minimal/main.js
 Serve locally and open in a WebGL2 browser. Checks should include:
 
 - No page/console errors; WebGL `getError() === 0`.
-- `window.IBRT.renderer` exists and exposes `renderFrame` / `setQuality`.
-- Default scene is Midnight Bar (~45 + 2 draws); switching to Neon Atrium updates inspector copy (~12 + 2).
-- Quality switch rebuilds targets (high → 1536px reflection); Low keeps interactive FPS on iGPU.
-- Side / grazing orbits still show puddle neon / stools without severe shear.
+- `window.IBRT.renderer` exists and exposes `renderFrame` / `setQuality` / `dispose`.
+- Default scene is Midnight Bar (~45 + 2 draws); switching to Neon Atrium updates inspector copy (~dozen + 2) with smooth tube neon.
+- Quality switch rebuilds targets (high → 1536px reflection) and disposes previous meshes; Low keeps interactive FPS on iGPU.
+- Side / grazing orbits still show puddle neon / stools without severe shear; puddle updates while orbiting (live RT, not baked).
 - Neon toggle drops BAR tubes + local pink light (and their reflection contribution).
-- Module imports succeed over HTTP; `window.IBRT.version` reports `0.7.0`.
+- Module imports succeed over HTTP; `window.IBRT.version` reports `0.8.0`.
 - Neon toggle immediately refreshes shadow/reflection (no stale BAR in the puddle on Low).
-- `/examples/minimal/` renders floor, cube, sphere, and puddle with orbit drag (no console errors).
+- Clear glass bottles show stronger Fresnel without transparency artifacts.
+- `/examples/minimal/` renders floor, cube, glassy sphere, and puddle with orbit drag (no console errors); exercises `lightColor` / `atmosphere`.
 
 ## Lower-end GPU considerations
 
@@ -270,14 +279,16 @@ Serve locally and open in a WebGL2 browser. Checks should include:
 - Temporal reuse of shadow/reflection targets on low when the camera/light are stable.
 - Water mesh stays a single inexpensive disc; motion is shader math.
 - Bar mesh segment counts scale down on the low preset.
+- Scene/quality rebuilds call `disposeMeshes()` so VAOs/VBOs do not accumulate.
 
 ## Known limitations
 
 - There is no physically correct ray tracing, refraction, global illumination, or multi-bounce reflection.
-- The reflection is a single mirrored color image. Objects outside the mirrored camera's capture can disappear from the puddle; soft edge fade blends those regions into water tint.
+- The reflection is a single mirrored color image (live RT with bounded temporal reuse — not a permanent bake). Objects outside the mirrored camera's capture can disappear from the puddle; soft edge fade blends those regions into water tint.
 - The water surface is a procedural dome plus soft undulation; it is not a fluid simulation.
-- Neon letters are procedural tubes (cylinders + elliptical rings / cube strokes), not true bent glass tubes or emissive textures.
+- Neon letters are procedural tubes (cylinders + elliptical rings), not true bent glass tubes or emissive textures.
 - Bar props are procedural lathes/cylinders, not authored glTF assets.
+- Fake glass uses Fresnel/`reflectivity` on opaque materials — not refraction or alpha sorting.
 - `implementation.js` expects the host app to supply meshes, materials, and a planar water object; it does not import glTF or manage assets.
 - The procedural textures in the demo are placeholders for future captured imagery.
 - Batched bar still uses one draw per unique material group; further GPU instancing would reduce CPU submit cost more.

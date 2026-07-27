@@ -4,11 +4,25 @@
  * Imports ONLY `../../src/implementation.js` — no demo shell, no scene modules.
  * Serve the repo root: `python3 -m http.server 8080`
  * Open: http://localhost:8080/examples/minimal/
+ *
+ * Host contract
+ * -------------
+ * Objects need: mesh, position, scale, color, texture, cast, receive, enabled.
+ * Optional: emissive, gloss, neon (demo toggle tag), reflectivity (0–1 fake glass),
+ *           rotation, rotationZ.
+ * `floorObject` MUST be the same reference as the floor entry in `objects`
+ *   so the mirror pass can skip it.
+ * Bump `contentVersion` when enabling/disabling objects that appear in mirrors
+ *   (or when changing local-light composition that should invalidate temporal reuse).
+ * Pass optional `lightColor` and `atmosphere` to tune the lit pass; omit for defaults.
+ * Call `ibrt.dispose()` when tearing down the host (and/or `disposeMesh` on rebuilds).
+ * Reflections stay a live mirrored-camera render — never a permanent bake.
  */
 
 import {
   createImageBasedRT,
   recommendContextOptions,
+  DEFAULT_ATMOSPHERE,
 } from "../../src/implementation.js";
 
 const canvas = document.querySelector("#viewport");
@@ -44,6 +58,15 @@ const neonTex = ibrt.createTexture((ctx, w, h) => {
   ctx.fillRect(0, 0, w, h);
 }, 16);
 
+const glassTex = ibrt.createTexture((ctx, w, h) => {
+  const g = ctx.createLinearGradient(0, 0, w, 0);
+  g.addColorStop(0, "#0a1820");
+  g.addColorStop(0.5, "#c8f0ff");
+  g.addColorStop(1, "#0a1820");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, w, h);
+}, 32);
+
 const floorMesh = ibrt.buildPlane();
 const cubeMesh = ibrt.buildCube();
 const sphereMesh = ibrt.buildSphere(12, 18);
@@ -78,12 +101,13 @@ const objects = [
     mesh: sphereMesh,
     position: [0.85, 0.55, 0.2],
     scale: [0.5, 0.5, 0.5],
-    color: [1, 0.45, 0.7, 1],
-    texture: neonTex,
-    emissive: [0.9, 0.12, 0.35],
+    color: [0.78, 0.92, 0.98, 1],
+    texture: glassTex,
+    emissive: [0.02, 0.04, 0.05],
     cast: true,
     receive: true,
-    gloss: 90,
+    gloss: 120,
+    reflectivity: 0.55,
     enabled: true,
   },
 ];
@@ -105,6 +129,14 @@ const state = {
   dragging: false,
   lastX: 0,
   lastY: 0,
+  contentVersion: 0,
+};
+
+// Slightly warmer key light + default atmosphere (explicit so hosts see the knobs).
+const lightColor = [1.0, 0.82, 0.62];
+const atmosphere = {
+  ...DEFAULT_ATMOSPHERE,
+  fogStrength: 0.5,
 };
 
 function resize() {
@@ -169,9 +201,16 @@ function frame(now) {
     time: now / 1000,
     aspect,
     clearColor: [0.02, 0.04, 0.06, 1],
+    contentVersion: state.contentVersion,
+    lightColor,
+    atmosphere,
   });
   requestAnimationFrame(frame);
 }
+
+window.addEventListener("pagehide", () => {
+  ibrt.dispose();
+});
 
 resize();
 requestAnimationFrame(frame);

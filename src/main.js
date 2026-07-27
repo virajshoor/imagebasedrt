@@ -120,8 +120,9 @@ function applyCameraDefaults(camera) {
   state.lightZ = camera.lightZ;
 }
 
-/** Rebuild meshes for the active scene (also runs on GPU quality change). */
+/** Dispose GPU meshes from the previous scene before rebuilding (textures stay cached). */
 function rebuildScene({ resetCamera = false } = {}) {
+  ibrt.disposeMeshes();
   const entry = SCENES[state.sceneId] || SCENES.bar;
   const built = entry.build(ibrt, ibrt.preset);
   activeScene = built;
@@ -330,7 +331,7 @@ rebuildScene({ resetCamera: true });
 resize();
 
 window.IBRT = {
-  version: "0.7.0",
+  version: "0.8.0",
   qualityPresets: QUALITY_PRESETS,
   renderer: ibrt,
   state,

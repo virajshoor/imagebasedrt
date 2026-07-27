@@ -29,3 +29,7 @@ not look for `package.json`, `npm install`, bundlers, or a dev server framework 
   automatable in-page controls.
 - Rendering runs headless in this environment's Chrome via software WebGL2 (~20 FPS is
   expected here, not a performance regression).
+- Scene/quality rebuilds call `ibrt.disposeMeshes()` so GPU buffers do not leak; textures stay
+  cached in scene modules across rebuilds. Full teardown uses `ibrt.dispose()`.
+- Reflections must remain a **live mirrored-camera RT** (bounded temporal reuse is fine).
+  Do not introduce permanent single-capture image bakes.

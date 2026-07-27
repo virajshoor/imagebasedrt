@@ -8,36 +8,32 @@
  * Consumed by `main.js` via `buildNeonAtrium(ibrt, preset)`.
  */
 
-function pushStroke(list, position, scale, rotationZ = 0) {
+function pushCube(list, position, scale, rotationZ = 0) {
   list.push({ position, scale, rotation: 0, rotationZ });
 }
 
-function pushVert(list, x, y, z, halfHeight, tube) {
-  pushStroke(list, [x, y, z], [tube, halfHeight, tube]);
+/** Unit cylinder is Y-aligned height 1; scaleY = full stroke length. */
+function pushTube(list, position, length, radius, rotationZ = 0) {
+  list.push({
+    position,
+    scale: [radius, length, radius],
+    rotation: 0,
+    rotationZ,
+  });
 }
 
-function pushHoriz(list, x, y, z, halfWidth, tube) {
-  pushStroke(list, [x, y, z], [halfWidth, tube, tube]);
+function pushTubeVert(list, x, y, z, length, radius) {
+  pushTube(list, [x, y, z], length, radius, 0);
 }
 
-function pushDiag(list, x, y, z, spanX, spanY, tube) {
-  const halfLen = Math.hypot(spanX, spanY) * 0.5;
+function pushTubeHoriz(list, x, y, z, length, radius) {
+  pushTube(list, [x, y, z], length, radius, Math.PI * 0.5);
+}
+
+function pushTubeDiag(list, x, y, z, spanX, spanY, radius) {
+  const length = Math.hypot(spanX, spanY);
   const tilt = Math.atan2(spanX, spanY);
-  pushStroke(list, [x, y, z], [tube, halfLen, tube], tilt);
-}
-
-function pushOval(list, cx, y, z, radiusX, radiusY, tube, segments) {
-  for (let index = 0; index < segments; index += 1) {
-    const a0 = (index / segments) * Math.PI * 2;
-    const a1 = ((index + 1) / segments) * Math.PI * 2;
-    const x0 = cx + Math.cos(a0) * radiusX;
-    const y0 = y + Math.sin(a0) * radiusY;
-    const x1 = cx + Math.cos(a1) * radiusX;
-    const y1 = y + Math.sin(a1) * radiusY;
-    const halfLen = Math.hypot(x1 - x0, y1 - y0) * 0.8;
-    const tilt = Math.atan2(x1 - x0, y1 - y0);
-    pushStroke(list, [(x0 + x1) * 0.5, (y0 + y1) * 0.5, z], [tube, halfLen, tube], tilt);
-  }
+  pushTube(list, [x, y, z], length, radius, tilt);
 }
 
 let cachedAtriumTextures = null;
@@ -132,38 +128,72 @@ function createAtriumTextures(ibrt) {
   return cachedAtriumTextures;
 }
 
-function buildNeonSign(ibrt, tex, detail = "balanced") {
+function buildNeonSign(ibrt, tex, preset) {
+  const detail = preset.neonDetail || "balanced";
   const y = 3.95;
   const z = 0.35;
   const tube = detail === "low" ? 0.075 : 0.058;
   const h = 0.64;
-  const ovalSegments = detail === "low" ? 10 : detail === "high" ? 18 : 12;
+  const letterHeight = h * 2;
+  const [ringSegs, tubeSegs] = preset.neonRing || [28, 8];
+  const tubeMesh = ibrt.buildCylinder(Math.max(8, detail === "low" ? 8 : 12), 1, 1, 1, true);
   const cyan = [];
   const magenta = [];
   const housing = [];
 
-  pushStroke(housing, [0, y, z - 0.16], [3.05, 0.95, 0.06]);
-  pushStroke(housing, [0, y - 1.05, z - 0.1], [0.09, 0.6, 0.09]);
-  pushStroke(housing, [0, y + 0.9, z - 0.1], [2.95, 0.018, 0.02]);
-  pushStroke(housing, [0, y - 0.9, z - 0.1], [2.95, 0.018, 0.02]);
+  pushCube(housing, [0, y, z - 0.16], [3.05, 0.95, 0.06]);
+  pushCube(housing, [0, y - 1.05, z - 0.1], [0.09, 0.6, 0.09]);
+  pushCube(housing, [0, y + 0.9, z - 0.1], [2.95, 0.018, 0.02]);
+  pushCube(housing, [0, y - 0.9, z - 0.1], [2.95, 0.018, 0.02]);
 
+  // Letter N — two verticals + diagonal (cylinder tubes).
   const nX = -2.2;
-  pushVert(cyan, nX, y, z, h, tube);
-  pushVert(cyan, nX + 0.9, y, z, h, tube);
-  pushDiag(cyan, nX + 0.45, y, z, 0.9, h * 2, tube);
+  pushTubeVert(cyan, nX, y, z, letterHeight, tube);
+  pushTubeVert(cyan, nX + 0.9, y, z, letterHeight, tube);
+  pushTubeDiag(cyan, nX + 0.45, y, z, 0.9, letterHeight, tube);
 
+  // Letter E — stem + three horizontals.
   const eX = -0.85;
-  pushVert(magenta, eX - 0.32, y, z, h, tube);
-  pushHoriz(magenta, eX + 0.12, y + h - tube, z, 0.38, tube);
-  pushHoriz(magenta, eX + 0.06, y, z, 0.3, tube);
-  pushHoriz(magenta, eX + 0.12, y - h + tube, z, 0.38, tube);
+  pushTubeVert(magenta, eX - 0.32, y, z, letterHeight, tube);
+  pushTubeHoriz(magenta, eX + 0.12, y + h - tube, z, 0.76, tube);
+  pushTubeHoriz(magenta, eX + 0.06, y, z, 0.6, tube);
+  pushTubeHoriz(magenta, eX + 0.12, y - h + tube, z, 0.76, tube);
 
-  pushOval(cyan, 0.7, y, z, 0.42, h, tube * 0.92, ovalSegments);
+  // Letter O — smooth wall-facing elliptical tube (matches Midnight Bar bowls).
+  const oVerts = [];
+  const oIdx = [];
+  ibrt.appendWallEllipseTube(
+    oVerts,
+    oIdx,
+    0.7,
+    y,
+    z,
+    0.42,
+    h,
+    tube * 0.92,
+    ringSegs,
+    tubeSegs,
+  );
 
+  // Letter N (second) — magenta.
   const n2X = 1.55;
-  pushVert(magenta, n2X, y, z, h, tube);
-  pushVert(magenta, n2X + 0.9, y, z, h, tube);
-  pushDiag(magenta, n2X + 0.45, y, z, 0.9, h * 2, tube);
+  pushTubeVert(magenta, n2X, y, z, letterHeight, tube);
+  pushTubeVert(magenta, n2X + 0.9, y, z, letterHeight, tube);
+  pushTubeDiag(magenta, n2X + 0.45, y, z, 0.9, letterHeight, tube);
+
+  const neonMat = (mesh, color, emissive) => ({
+    mesh,
+    position: [0, 0, 0],
+    scale: [1, 1, 1],
+    color,
+    texture: tex.neonTexture,
+    emissive,
+    neon: true,
+    cast: false,
+    receive: false,
+    gloss: 140,
+    enabled: true,
+  });
 
   return [
     {
@@ -179,32 +209,9 @@ function buildNeonSign(ibrt, tex, detail = "balanced") {
       gloss: 36,
       enabled: true,
     },
-    {
-      mesh: ibrt.mergeCubeInstances(cyan),
-      position: [0, 0, 0],
-      scale: [1, 1, 1],
-      color: [0.1, 1, 0.96, 1],
-      texture: tex.neonTexture,
-      emissive: [0.08, 2.1, 1.75],
-      neon: true,
-      cast: false,
-      receive: false,
-      gloss: 140,
-      enabled: true,
-    },
-    {
-      mesh: ibrt.mergeCubeInstances(magenta),
-      position: [0, 0, 0],
-      scale: [1, 1, 1],
-      color: [1, 0.2, 0.58, 1],
-      texture: tex.neonTexture,
-      emissive: [2.0, 0.08, 0.5],
-      neon: true,
-      cast: false,
-      receive: false,
-      gloss: 140,
-      enabled: true,
-    },
+    neonMat(ibrt.mergeMeshInstances(tubeMesh, cyan), [0.1, 1, 0.96, 1], [0.08, 2.1, 1.75]),
+    neonMat(ibrt.makeMesh(oVerts, oIdx), [0.1, 1, 0.96, 1], [0.08, 2.1, 1.75]),
+    neonMat(ibrt.mergeMeshInstances(tubeMesh, magenta), [1, 0.2, 0.58, 1], [2.0, 0.08, 0.5]),
   ];
 }
 
@@ -214,7 +221,7 @@ export const neonAtriumMeta = {
   title: "Neon Atrium",
   blurb: "A low-cost 3D atrium with image-assisted surfaces, orbit controls, and a dynamic shadow-casting light.",
   neonLabel: "Neon sign",
-  neonHint: "Letterform NEON tubes and colored local light",
+  neonHint: "Cylinder + ellipse-tube NEON letters and colored local light",
   legendNote: "The round puddle reflects a mirrored scene image of the NEON letter sign, then gently warps it with soft undulation and thin feathered edges.",
   tryThis: "Cheap baseline: orbit around the NEON sign and watch the puddle. Compare draw count to Midnight Bar, then switch GPU quality → Low.",
 };
@@ -225,7 +232,7 @@ export function buildNeonAtrium(ibrt, preset) {
   const plane = ibrt.buildPlane();
   const sphere = ibrt.buildSphere(preset.neonDetail === "low" ? 9 : 11, preset.neonDetail === "low" ? 12 : 16);
   const puddle = ibrt.buildPuddle(preset.puddleSegments, preset.puddleRings);
-  const neonBatches = buildNeonSign(ibrt, tex, preset.neonDetail);
+  const neonBatches = buildNeonSign(ibrt, tex, preset);
 
   const objects = [
     { mesh: plane, position: [0, 0, 0], scale: [8, 1, 6], color: [0.92, 0.97, 1, 1], texture: tex.floorTexture, cast: false, receive: true, gloss: 55, enabled: true },
